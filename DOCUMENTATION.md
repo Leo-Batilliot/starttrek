@@ -87,6 +87,110 @@ Exemples de jalons attendus :
 
 <!-- Ajouter les futures entrées ci-dessous, en ordre antéchronologique (le plus récent en premier). -->
 
+### v0.7.0 — 2026-04-27 — Env factory + wrappers (T0.7)
+
+**Type** : feature
+**Ticket** : T0.7
+**Phase** : 0 (Fondations)
+
+**Résumé**
+Ajout de `src/env/factory.py::build_env(cfg, seed, render_mode)` (point d'entrée unique pour instancier `LunarLander-v3`) et `src/env/wrappers.py` (registre `WRAPPERS` + wrappers custom `ObsNormalize`, `RewardClip` + alias `RecordEpisodeStats` vers `gym.wrappers.RecordEpisodeStatistics`). Couverture par 15 tests dans `tests/test_env_factory.py`.
+
+**Contexte / motivation**
+§4.2 de `PROJECT.md` impose une factory unique : « Aucun autre fichier que `factory.py` ne doit appeler `gym.make()` ». Le but est triple — (1) changer d'env = changer une clé YAML, (2) composer les wrappers de façon déclarative et persistable dans `runs/<run>/config.yaml`, (3) ajouter un wrapper bonus = ajouter une ligne au registre, sans toucher au trainer. Ce ticket débloque T0.11 (le trainer va appeler `build_env`), T0.12 (l'evaluator avec `render_mode="rgb_array"` pour la vidéo), Phase 1 (les baselines random/heuristic ont besoin de l'env), et tous les bonus environnementaux (vent T5.8, continuous T5.7).
+
+**Détails techniques**
+
+- **Fichiers créés** :
+  - `src/env/factory.py` — fonction `build_env`.
+  - `src/env/wrappers.py` — registre `WRAPPERS` + classes custom.
+  - `tests/test_env_factory.py` — 15 tests.
+- **Signature gelée** (cf. PLAN.md §Signatures) :
+  ```python
+  def build_env(cfg: EnvConfig, *, seed: int, render_mode: str | None = None) -> gym.Env
+  ```
+- **Pipeline factory** :
+  1. `gym.make(cfg.id, render_mode=render_mode, **cfg.kwargs)` — `cfg.kwargs` permet de passer `enable_wind=True` ou `continuous=True` directement depuis le YAML.
+  2. Compose les wrappers dans l'ordre de la liste YAML : `env = WRAPPERS[wrapper_cfg.name](env, **wrapper_cfg.kwargs)`. L'ordre compte (un `ObsNormalize` après `RewardClip` n'agit pas sur les mêmes flux).
+  3. `env.reset(seed=seed)` puis `env.action_space.seed(seed)` — les deux seeds sont nécessaires : `reset(seed)` initialise la dynamique Box2D, `action_space.seed(seed)` rend `env.action_space.sample()` reproductible (utilisé par `RandomAgent` en T1.1).
+  4. Wrapper inconnu → `ValueError` explicite avec liste des wrappers disponibles. Fail loud, pas de fallback silencieux.
+- **Registre `WRAPPERS`** (`src/env/wrappers.py`) :
+  ```python
+  WRAPPERS = {
+      "RecordEpisodeStats": gym.wrappers.RecordEpisodeStatistics,  # alias
+      "ObsNormalize":       ObsNormalize,                          # custom
+      "RewardClip":         RewardClip,                            # custom
+  }
+  ```
+  - **`RecordEpisodeStats`** : alias vers `gym.wrappers.RecordEpisodeStatistics` (le nom officiel Gymnasium 1.0). Le YAML continue d'utiliser `RecordEpisodeStats` conformément aux exemples PROJECT.md §4.3 / PLAN.md, sans contredire le nom interne de la lib. Injecte `info["episode"] = {"r": return, "l": length, "t": wall_time}` au step terminal — sera consommé par le trainer T0.11 pour remplir les colonnes `return` / `length` du logger.
+  - **`ObsNormalize(env, *, eps=1e-8)`** — z-score running stats avec algorithme de Welford (mean + M2 incrémentaux) :
+    ```python
+    delta = obs - mean
+    mean += delta / count
+    M2 += delta * (obs - mean)
+    var = M2 / count
+    return (obs - mean) / (sqrt(var) + eps)
+    ```
+    Output forcé en `np.float32` (cohérent avec `Transition.obs` PLAN.md §Signatures). Pas de dépendance à `gym.wrappers.NormalizeObservation` — implémentation locale 10 lignes, plus prévisible pour les tests et plus simple à débrancher en ablation.
+  - **`RewardClip(env, *, low=-1.0, high=1.0)`** — sous-classe de `gym.RewardWrapper`, `reward(r) = np.clip(r, low, high)`. Validation `low <= high` au constructeur. Sera utilisé en ablation T3.4 (reward clipping ON/OFF).
+- **Tests `tests/test_env_factory.py`** (15 cas, 4 classes) :
+  - `TestBuildEnv` (8) : observation_space `(8,)`, action_space `Discrete(4)`, unwrapped est bien `LunarLander`, no-wrappers ne crée pas de couches parasites, ordre des wrappers respecté (`ObsNormalize(RewardClip(env))`), alias `RecordEpisodeStats` résolu, `ValueError` sur wrapper inconnu, seed déterministe (obs reset + 20 actions samplées identiques entre deux instances), `render_mode="rgb_array"` propagé jusqu'à l'env de base et `env.render()` renvoie un `(H, W, 3)` numpy.
+  - `TestRewardClip` (4) : clip au-dessus, clip en-dessous, passthrough dans la plage, `low > high` lève `ValueError`.
+  - `TestObsNormalize` (2) : shape `(8,)` + dtype `float32`, `count` augmente après quelques steps.
+  - `TestRegistry` (1) : les 3 noms requis sont enregistrés.
+
+**Alternatives rejetées**
+
+- **Aliasser `ObsNormalize` vers `gym.wrappers.NormalizeObservation`** : la version Gymnasium normalise sur la base d'un `RunningMeanStd` interne avec une API légèrement différente (`update_running_mean`, `epsilon` par défaut différent). Rouler notre propre Welford donne contrôle total, zéro surprise au fil des versions Gymnasium, et 10 lignes lisibles dans le code source. Le surcoût est nul.
+- **Aliasser `RewardClip` vers `gym.wrappers.ClipReward`** : `ClipReward` existe mais utilise `min_reward`/`max_reward` comme noms de kwargs alors que nos YAML utilisent `low`/`high`. Plutôt que de gérer le mapping de noms, on ré-implémente — c'est trivial.
+- **Mettre la liste des wrappers dans une string CSV** plutôt qu'une `list[dict]` YAML : moins lisible et empêche les kwargs par wrapper. La structure `list[{name, kwargs}]` est imposée par `WrapperConfig` (T0.4).
+- **Ne pas seeder `action_space`** : tentant car `env.reset(seed=seed)` est déjà fait, mais `action_space.sample()` a son propre RNG. Sans `action_space.seed(seed)`, `RandomAgent` produirait des actions différentes entre deux runs identiques — casserait `test_seeding.py::test_env_rollout_is_reproducible`.
+- **Permettre `gym.make("LunarLander-v3")` ailleurs en dépannage** : violation directe de §4.2 de `PROJECT.md` (« everything env-related is built from config »). Pas de débat.
+- **Cacher l'env construit via cache mémoïsé** (`@lru_cache` sur `(cfg, seed)`) : risque d'aliasing entre runs (un wrapper stateful comme `ObsNormalize` partagerait son `_count` entre seeds). Reconstruire à chaque appel = état frais garanti.
+- **Faire une factory qui retourne aussi un `seed` dérivé** ou `env_info` dict : sur-conception, le contrat actuel est suffisant. Le trainer/evaluator récupèrent ce dont ils ont besoin via `env.observation_space` / `env.action_space` directement.
+- **Utiliser un décorateur `@register_wrapper("name")`** comme prévu pour les agents : pour les wrappers le dict statique suffit (très peu d'entrées attendues). Le décorateur sera utile pour `agents/registry.py` (T0.8) où on s'attend à empiler beaucoup d'agents (random, heuristic, dqn, double_dqn, ppo, sac, ...).
+- **Lever `ValueError` si `cfg.kwargs` contient une clé interdite** : la liste des kwargs valides dépend de l'env, on délègue cette validation à `gym.make` qui lève déjà une erreur claire.
+
+**Impact**
+- **T0.11 (Trainer)** : peut maintenant écrire `env = build_env(cfg.env, seed=cfg.seed)` et oublier complètement Gymnasium derrière. Le trainer reste env-agnostic.
+- **T0.12 (Evaluator)** : pareil avec `render_mode="rgb_array"` quand `cfg.eval.record_video=True`.
+- **T1.1 / T1.2 (baselines)** : `RandomAgent` peut sampler via `env.action_space.sample()` (deterministic seedé) ; `HeuristicAgent` peut lire les indices de l'obs vector (cf. §3.2 PROJECT.md) sans connaître l'env.
+- **T3.4 (ablation reward clipping)** : il suffit d'ajouter `RewardClip` dans la liste de wrappers du YAML d'ablation, zéro changement de code.
+- **T5.8 (bonus vent)** : YAML avec `env.kwargs.enable_wind: true, wind_power: 15.0, turbulence_power: 1.5` — passé tel quel à `gym.make`.
+- **Aucune dette technique** : les wrappers custom sont auto-contenus (pas d'imports croisés vers `agents/`, `training/`, etc.). Le registre est extensible sans refactor.
+
+**Non couvert volontairement**
+- **Wrapper `RecordVideo`** : non listé par §4.1 de `PROJECT.md`. La vidéo sera gérée par `utils/video.py` (T0.13) qui consomme des frames `imageio` directement, plutôt que via un wrapper Gymnasium — donne plus de contrôle (FPS, taille, encodeur).
+- **Wrapper `TimeLimit`** : déjà appliqué automatiquement par `gym.make` (Gymnasium garantit un `TimeLimit` par défaut). Pas besoin de l'ajouter explicitement.
+- **`build_buffer(cfg)` / `build_network(cfg)` factories** : T0.9 / T0.10.
+- **Validation de la config** (vérifier que `cfg.id` existe dans Gymnasium avant `gym.make`) : `gym.make` lève déjà une erreur claire. On ne double pas la validation.
+
+**Validation**
+```bash
+# Tests dédiés (15 cas)
+python -m unittest tests.test_env_factory -v
+# → Ran 15 tests, OK
+
+# Suite complète
+python -m unittest discover tests/
+# → Ran 55 tests, OK
+
+# Smoke check manuel (factory + reset + step)
+python -c "
+from src.env.factory import build_env
+from src.utils.config import EnvConfig, WrapperConfig
+cfg = EnvConfig(id='LunarLander-v3', kwargs={}, wrappers=(
+    WrapperConfig(name='RecordEpisodeStats', kwargs={}),
+))
+env = build_env(cfg, seed=0)
+obs, _ = env.reset(seed=0)
+assert obs.shape == (8,) and env.action_space.n == 4
+print('OK', obs.dtype, obs.shape)
+"
+```
+
+---
+
 ### v0.6.0 — 2026-04-27 — Classifieur de terminaison (T0.6)
 
 **Type** : feature

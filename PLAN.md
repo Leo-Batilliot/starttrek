@@ -177,7 +177,7 @@ Chaque ticket a : **objectif** · **livrable** · **critère d'acceptation** (v�
   - **Livrable** : `src/utils/termination.py` + `tests/test_termination.py`.
   - **Critère d'acceptation** : le test synthétique valide chaque cas (ex : `(both_legs_contact=1, reward≈+100, terminated=True)` → `LAND` ; `reward≈-100, terminated=True, legs=0` → `CRASH` ; etc.). 0 `UNKNOWN` sur un set de 1000 épisodes aléatoires réels — à valider en T1.2.
 
-- [ ] **T0.7 — `env/factory.py` + `env/wrappers.py`**
+- [x] **T0.7 — `env/factory.py` + `env/wrappers.py`**
   - **Objectif** : `build_env(cfg, seed, render_mode)` unique, qui instancie `gym.make("LunarLander-v3", **cfg.kwargs)` puis compose les wrappers listés dans `cfg.wrappers` (registre `WRAPPERS = {"RecordEpisodeStats": ..., "ObsNormalize": ..., "RewardClip": ...}`). Seed via `env.reset(seed=seed)`.
   - **Livrable** : `src/env/factory.py`, `src/env/wrappers.py`, `tests/test_env_factory.py`.
   - **Critère d'acceptation** : `build_env(cfg, seed=0)` renvoie un `gym.Env` avec `observation_space.shape == (8,)` et `action_space.n == 4` ; le test `test_env_factory.py` vérifie que les wrappers de la config sont bien appliqués dans l'ordre.

@@ -1,0 +1,44 @@
+run_name: smoke
+seed: 0
+
+env:
+  id: LunarLander-v3
+  kwargs: {}
+  wrappers:
+    - name: RecordEpisodeStats
+      kwargs: {}
+
+# Sections agent/training/eval : valeurs placeholder pour satisfaire RunConfig.
+# Les champs ci-dessous seront réellement consommés à partir de T0.11 (trainer)
+# et T1.1 (RandomAgent dans le registre AGENTS).
+agent:
+  name: random
+  network:
+    hidden_sizes: [128, 128]
+    activation: relu
+  gamma: 0.99
+  lr: 5.0e-4
+  batch_size: 64
+  buffer_size: 100000
+  min_buffer_size: 1000
+  target_update:
+    kind: hard
+    every_steps: 1000
+  epsilon:
+    start: 1.0
+    end: 0.05
+    decay_steps: 100000
+  grad_clip: 10.0
+
+training:
+  total_steps: 5000
+  log_every: 100
+  eval_every: 1000
+  eval_episodes: 5
+  save_every: 1000
+
+eval:
+  episodes: 10
+  greedy: true
+  record_video: false
+  video_every: 1

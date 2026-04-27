@@ -307,8 +307,3 @@ def save_config(cfg: RunConfig, path: str | Path) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("w", encoding="utf-8") as f:
         yaml.safe_dump(cfg.to_dict(), f, sort_keys=False, default_flow_style=False)
-
-if __name__ == "__main__":
-    conf = load_config(Path("configs/baseline/dqn.yaml"))
-
-    print(conf.training.eval_every)
