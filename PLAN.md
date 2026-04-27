@@ -172,7 +172,7 @@ Chaque ticket a : **objectif** · **livrable** · **critère d'acceptation** (v�
   - **Livrable** : `src/utils/logger.py`.
   - **Critère d'acceptation** : 100 appels à `logger.log(episode=…, return=…, …)` produisent un CSV valide ouvrable par pandas (test manuel) ; les colonnes sont dans l'ordre attendu ; `events.log` contient le même contenu sous forme lisible.
 
-- [ ] **T0.6 — `utils/termination.py` + tests synthétiques**
+- [x] **T0.6 — `utils/termination.py` + tests synthétiques**
   - **Objectif** : énumération `TerminationReason` + fonction `classify(info, reward, state, terminated, truncated) → TerminationReason` qui distingue `LAND` / `CRASH` / `OUT_OF_VIEW` / `SLEEP` / `TRUNCATED` selon les heuristiques Box2D (legs contact, position hors frame, reward ≈ ±100, flag `truncated`).
   - **Livrable** : `src/utils/termination.py` + `tests/test_termination.py`.
   - **Critère d'acceptation** : le test synthétique valide chaque cas (ex : `(both_legs_contact=1, reward≈+100, terminated=True)` → `LAND` ; `reward≈-100, terminated=True, legs=0` → `CRASH` ; etc.). 0 `UNKNOWN` sur un set de 1000 épisodes aléatoires réels — à valider en T1.2.

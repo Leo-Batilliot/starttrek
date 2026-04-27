@@ -87,6 +87,80 @@ Exemples de jalons attendus :
 
 <!-- Ajouter les futures entrées ci-dessous, en ordre antéchronologique (le plus récent en premier). -->
 
+### v0.6.0 — 2026-04-27 — Classifieur de terminaison (T0.6)
+
+**Type** : feature
+**Ticket** : T0.6
+**Phase** : 0 (Fondations)
+
+**Résumé**
+Ajout de `src/utils/termination.py` : enum `TerminationReason` (`LAND` / `CRASH` / `OUT_OF_VIEW` / `SLEEP` / `TRUNCATED` / `UNKNOWN`) et fonction `classify(info, reward, state, terminated, truncated)` qui mappe une fin d'épisode LunarLander-v3 sur l'une des catégories. Couverture par 18 tests synthétiques dans `tests/test_termination.py`.
+
+**Contexte / motivation**
+§3.5 et §7.2 de `PROJECT.md` exigent que chaque épisode soit loggué avec sa **raison** de terminaison (crash / land / out-of-view / sleep / truncated). C'est l'un des trois critères d'acceptation §7. Sans ce module, la colonne `termination_reason` de `metrics.csv` (cf. `Logger`, T0.5) ne pourrait être remplie. La logique est isolée dans un module dédié, testable hors environnement, pour pouvoir être exercée par 1000 trajectoires synthétiques sans dépendre de Box2D — la validation sur trajectoires réelles viendra en T1.3.
+
+**Détails techniques**
+
+- **Fichiers créés** :
+  - `src/utils/termination.py` : enum + `classify()`.
+  - `tests/test_termination.py` : 18 tests couvrant chaque branche + cas adverses.
+- **Signature gelée** (cf. PLAN.md §Signatures) :
+  ```python
+  def classify(info: dict, reward: float, state: np.ndarray,
+               terminated: bool, truncated: bool) -> TerminationReason
+  ```
+- **Heuristiques implémentées** (ordre de priorité) :
+  1. **Override `info["termination_reason"]`** : si un wrapper a déjà classé l'épisode (valeur valide d'enum), on l'honore. Valeur invalide → fallback heuristique silencieux. Permet à un futur wrapper d'env d'injecter une vérité-terrain sans réécrire la fonction.
+  2. **`truncated=True` → `TRUNCATED`** : prioritaire sur tout signal de récompense. Gymnasium peut renvoyer `terminated=True` ET `truncated=True` simultanément (rare mais possible) ; on traite la coupure max-steps comme dominante car elle reflète une décision externe à la dynamique.
+  3. **`terminated=False` → `UNKNOWN`** : la fonction n'est pas censée être appelée hors fin d'épisode, mais on retourne `UNKNOWN` plutôt que de lever pour rester safe en logging.
+  4. **Both legs contact + reward ≥ 80** → `LAND` : seuil à 80 (et non 100) pour absorber le coût per-step du dernier tick. `+100` est ajouté au moment du `not lander.awake` dans Gymnasium ; le step terminal contient aussi du shaping négatif (~-0.3 par thruster).
+  5. **`|x| ≥ 1.0`** → `OUT_OF_VIEW` : limite de frame exacte de l'env (`abs(state[0]) >= 1.0` dans la source Gymnasium). Placée **avant** la branche `CRASH` car les deux donnent reward ≈ -100 ; la position permet seule de discriminer.
+  6. **reward ≤ -80** → `CRASH` : touche le sol corps en premier, pas via les jambes. Seuil à -80 pour la même raison de symétrie que LAND.
+  7. **No legs + |vx|, |vy|, |theta_dot| ≤ 0.05** → `SLEEP` : Box2D met le corps "asleep" lorsqu'il est immobile suffisamment longtemps. Cas distinct de LAND car aucun pied au contact (atterrissage borderline ou repos sur la coque sans crash franc).
+  8. Sinon → `UNKNOWN`. Doit rester à 0 % sur trajectoires réelles ; sera vérifié en T1.3.
+- **Constantes nommées** (`_LAND_REWARD_MIN=80.0`, `_CRASH_REWARD_MAX=-80.0`, `_OUT_OF_VIEW_X=1.0`, `_SLEEP_LIN_VELOCITY_MAX=0.05`, `_SLEEP_ANG_VELOCITY_MAX=0.05`, `_IDX_*`) — préfixe `_` pour souligner l'usage interne ; pas de surface publique au-delà de `classify` et `TerminationReason`.
+- **Validation de forme** : `np.asarray(state, dtype=np.float32)` puis `shape == (8,)` requis. Rejet via `ValueError` explicite — fail loud plutôt que silently mis-classer.
+- **Enum** : `class TerminationReason(str, Enum)` — héritage de `str` permet la comparaison directe `reason == "land"` et la sérialisation YAML/JSON gratuite (le logger sérialise `termination_reason` en colonne CSV).
+- **Aucune dépendance ajoutée** : seulement `numpy` (déjà présent) et stdlib `enum` / `typing`. Pas d'appel à `gymnasium` — le module est testable en pure Python.
+
+**Alternatives rejetées**
+
+- **Lever `ValueError` quand `terminated=False and truncated=False`** : tentant pour signaler un usage incorrect, mais cela rendrait le logger plus fragile (un appel pendant un épisode en cours casserait tout le run). Retourner `UNKNOWN` est plus tolérant et le test T1.3 vérifiera de toute façon le taux de `UNKNOWN`.
+- **Mettre la branche CRASH avant OUT_OF_VIEW** : ordre du code source de Gymnasium (`if game_over or abs(x)>=1`). Mais en l'absence d'accès à `game_over` (info dict ne le contient pas), on ne peut différencier que par la position, donc OOV doit être testé en premier sinon tout sortie hors-cadre serait classée CRASH par défaut.
+- **Seuils stricts à exactement ±100** : trop fragiles. Le shaping per-step ajoute ~±0.3 au step terminal (penalty thruster, distance pad). Marges ±20 absorbent ces variations sans masquer les vrais signaux.
+- **Détecter SLEEP via `info["TimeLimit.truncated"]` ou un flag Box2D** : `info` ne contient pas le flag `awake` du corps Box2D. Heuristique sur la vélocité est la seule observable disponible.
+- **Heuristique "both legs + reward modéré → LAND souple"** (seuil à +50) : risque de fausser les statistiques (atterrissages "moyens" comptabilisés mais le sujet veut un vrai LAND avec +100 final). Le seuil à 80 reste robuste.
+- **Mettre le module dans `src/training/` plutôt que `src/utils/`** : §4.1 de `PROJECT.md` impose `src/utils/termination.py`. Pas de débat.
+- **Ajouter une constante `THRESHOLDS` exposée et configurable depuis YAML** : sur-conception. Les seuils sont fixes par la physique de l'env, pas un hyperparamètre d'entraînement. Si un futur env nécessitait d'autres bornes, on créera une variante.
+- **Couvrir des cas partiels (un seul pied au contact + reward modéré)** : ces situations sont par construction `UNKNOWN`. Ne pas inventer une catégorie supplémentaire — laisser remonter au logger pour analyse en T1.3.
+
+**Impact**
+- **T0.5 (Logger)** : la colonne `termination_reason` peut maintenant être remplie par les valeurs `TerminationReason.X.value` (string lowercase).
+- **T0.11 (Trainer)** : à chaque fin d'épisode, le trainer appellera `classify(info, reward, last_obs, terminated, truncated)` et passera la chaîne au logger.
+- **T0.12 (Evaluator)** : agrège les `termination_reason` sur les épisodes d'éval pour produire la breakdown du `summary.json` (§8 de `PROJECT.md`).
+- **T1.3** : valide expérimentalement que `UNKNOWN == 0` sur 100+100 épisodes random+heuristic — c'est l'épreuve du feu de ce classifieur.
+- **Aucune dette technique** : les seuils sont localisés et le module est testé exhaustivement.
+
+**Non couvert volontairement**
+- **Validation sur trajectoires réelles** → T1.3 (nécessite RandomAgent/HeuristicAgent qui n'existent pas encore).
+- **Hooking dans le trainer** → T0.11 (le trainer n'existe pas).
+- **Documentation utilisateur** (README) → T4.1 / T6.2.
+- **Adaptation au mode `continuous=True`** : la sémantique reste valide (mêmes 8D, mêmes terminations) mais non testée explicitement — viendra avec le bonus T5.7 (SAC continuous).
+
+**Validation**
+```bash
+# Tests unitaires (18 cas dédiés)
+python -m unittest tests.test_termination -v
+# → Ran 18 tests, OK
+
+# Suite complète
+python -m unittest discover tests/
+# → Ran 40 tests, OK
+```
+Run de référence : pas de run réel à ce stade — la validation finale (UNKNOWN ratio) est conditionnée à T1.3.
+
+---
+
 ### v0.1.0 — 2026-04-22 — Initialisation du dépôt (T0.1)
 
 **Type** : infra

@@ -17,7 +17,7 @@ class Logger:
         run_dir.mkdir(parents=True, exist_ok=True)
 
         self._columns: list[str] = list(metric_columns)
-        self._flush_every: int = max(1, int(flush_every))
+        self._flush_every: int = flush_every
         self._n_logged: int = 0
         self._closed: bool = False
 
