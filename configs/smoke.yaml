@@ -8,9 +8,7 @@ env:
     - name: RecordEpisodeStats
       kwargs: {}
 
-# Sections agent/training/eval : valeurs placeholder pour satisfaire RunConfig.
-# Les champs ci-dessous seront réellement consommés à partir de T0.11 (trainer)
-# et T1.1 (RandomAgent dans le registre AGENTS).
+
 agent:
   name: random
   network:
