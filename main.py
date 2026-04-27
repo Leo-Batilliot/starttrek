@@ -13,6 +13,8 @@ from src.utils.config import load_config, save_config
 from src.utils.logger import Logger
 from src.utils.seeding import seed_all
 from src.utils.termination import classify
+from src.agents.base import Transition
+from src.memory.replay_buffer import ReplayBuffer
 
 
 METRIC_COLUMNS = [
@@ -53,6 +55,9 @@ def main(config_path: str = "configs/smoke.yaml", render: bool = False) -> None:
     print(f"[T0.4] save_config → {run_dir / 'config.yaml'}")
     print()
 
+    buffer = ReplayBuffer(capacity=10_000, obs_shape=env.observation_space.shape)
+    print(f"[T0.9] ReplayBuffer  → capacity={buffer._capacity}, obs_shape={env.observation_space.shape}")
+
     # tmp (0.8 && 1.1)
     global_step = 0
     breakdown: Counter[str] = Counter()
@@ -70,15 +75,17 @@ def main(config_path: str = "configs/smoke.yaml", render: bool = False) -> None:
 
         while not (terminated or truncated):
             action = env.action_space.sample()
-            obs, reward, terminated, truncated, info = env.step(action)
+            next_obs, reward, terminated, truncated, info = env.step(action)
+
+            buffer.push(Transition(obs=obs, action=int(action),reward=float(reward), next_obs=next_obs, terminated=bool(terminated), truncated=bool(truncated)))
             ep_return += float(reward)
             ep_length += 1
             global_step += 1
             last_reward = float(reward)
-            last_obs = obs
             last_info = info
+            obs = next_obs
 
-        # 0.6 — classification de la terminaison
+        # 0.6 Classification de la terminaison
         reason = classify(last_info, last_reward, last_obs, terminated, truncated)
         breakdown[reason.value] += 1
         returns.append(ep_return)
@@ -98,6 +105,13 @@ def main(config_path: str = "configs/smoke.yaml", render: bool = False) -> None:
         )
         print(f"  ep {ep:>2}: return={ep_return:>8.2f}  length={ep_length:>3}  "
               f"reason={reason.value}")
+
+    if len(buffer) >= 64:
+        batch = buffer.sample(64)
+        print(f"[T0.9] Buffer    → len={len(buffer)}, "
+              f"sample obs={tuple(batch['obs'].shape)}, "
+              f"action={tuple(batch['action'].shape)}, "
+              f"done_rate={batch['done'].mean().item():.2f}")
 
     logger.close()
     env.close()
