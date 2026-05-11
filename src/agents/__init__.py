@@ -1,1 +1,2 @@
-from . import noop_agent  # noqa: F401  -- side-effect: register NoOpAgent in AGENTS
+from . import noop_agent
+from . import random_agent

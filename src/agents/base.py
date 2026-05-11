@@ -20,8 +20,6 @@ class Transition:
 ActionType = Union[int, np.ndarray]
 
 class Agent(ABC):
-    """Interface abstraite. Hérite de cette classe pour créer un agent."""
-
     @abstractmethod
     def act(self, obs: np.ndarray, *, greedy: bool = False) -> ActionType:
         """"""

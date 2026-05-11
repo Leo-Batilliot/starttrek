@@ -225,7 +225,7 @@ Chaque ticket a : **objectif** · **livrable** · **critère d'acceptation** (v�
 
 > But : produire deux agents de référence (random + heuristique), valider que la classification de terminaison et l'enregistrement vidéo fonctionnent sur des trajectoires réelles, obtenir les assets "random" et "heuristic" pour le rapport.
 
-- [ ] **T1.1 — `agents/random_agent.py`**
+- [x] **T1.1 — `agents/random_agent.py`**
   - **Objectif** : `RandomAgent` qui tire uniformément dans `action_space`. Implémente toutes les méthodes ABC (learn = no-op, save/load = dump/load d'un seed).
   - **Livrable** : `src/agents/random_agent.py` + entrée dans `AGENTS` + `configs/baseline/random.yaml`.
   - **Critère d'acceptation** : `python train.py --config configs/baseline/random.yaml --seed 0` produit un `runs/random/0/` avec `mean_return ≈ -150` (ordre de grandeur attendu d'une politique aléatoire sur LunarLander) ; vidéo sauvegardée.

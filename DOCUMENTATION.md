@@ -87,6 +87,104 @@ Exemples de jalons attendus :
 
 <!-- Ajouter les futures entrées ci-dessous, en ordre antéchronologique (le plus récent en premier). -->
 
+### v1.1.0 — 2026-05-11 — RandomAgent (T1.1)
+
+**Type** : feature
+**Ticket** : T1.1
+**Phase** : 1 (Baselines)
+
+**Résumé**
+Ajout de `src/agents/random_agent.py::RandomAgent` (échantillonnage uniforme sur `[0, n_actions)` via un `np.random.Generator` privé) enregistré sous `"random"` dans le registry. Auto-import dans `src/agents/__init__.py`. Création de `configs/baseline/random.yaml` (20 000 steps, eval 100 épisodes). Couverture par 10 tests (TestRandomAgent). Run de référence `runs/random/0/` : **mean_return = -185.70** sur 100 épisodes greedy, breakdown 91 % crash / 9 % out_of_view / 0 % land — cohérent avec le bruit attendu d'une politique aléatoire sur LunarLander-v3. Premier livrable de Phase 1.
+
+**Contexte / motivation**
+Premier agent réel du projet et baseline obligatoire (§6.1 PROJECT.md). Sert trois fonctions :
+1. **Borne inférieure de performance** — fournit le `mean_return` à battre pour qu'un agent appris ait un sens (un DQN qui plafonne au niveau random est cassé).
+2. **Validation de la chaîne sur trajectoires réelles** — le NoOp produisait des fins quasi-identiques (90+ steps de chute libre → crash) ; RandomAgent introduit de la variance (out_of_view apparaît, longueurs d'épisode plus dispersées), exerçant `termination.classify` sur des cas non triviaux. C'est T1.3 qui validera formellement `UNKNOWN == 0`, mais déjà ici 0/100 unknowns.
+3. **Premier vrai usage du pipeline vidéo** — `eval.py --record-video` produit 4 MP4 (`video_every: 25` sur 100 épisodes) qui serviront de référence visuelle dans le rapport (T1.4 fera l'export propre vers `assets/videos/random.mp4`).
+
+**Détails techniques**
+
+- **Fichiers créés** :
+  - `src/agents/random_agent.py` — `RandomAgent`.
+  - `configs/baseline/random.yaml` — config baseline.
+  - `tests/test_random_agent.py` — 10 tests.
+- **Fichiers modifiés** :
+  - `src/agents/__init__.py` — ajout de `from . import random_agent` (side-effect register).
+- **`RandomAgent(cfg: AgentConfig, *, n_actions: int)`** :
+  - **Constructor** : dérive son propre seed via `int(np.random.randint(0, 2**31 - 1))` au moment de l'instanciation. Comme `train.py` appelle `seed_all(seed)` *avant* de construire l'agent, ce tirage est déterministe pour un seed global donné → reproductibilité bout-à-bout sans avoir à propager `cfg.seed` jusqu'à l'agent (le `RunConfig` ne l'expose pas dans `AgentConfig`).
+  - **RNG privé** : `self._rng = np.random.default_rng(self._seed)`. Pas d'usage de `np.random.*` global pour éviter de polluer l'état partagé (le trainer pourrait à terme se servir lui aussi de `np.random` pour d'autres choses, et on veut que les actions de l'agent restent isolées et persistables).
+  - **`act(obs, *, greedy=False) → int`** : `self._rng.integers(0, n_actions)`. Le flag `greedy` est ignoré (une politique aléatoire n'a pas de "greedy" — c'est documenté dans le `assert` du test).
+  - **`observe`/`learn`** : no-op (`learn()` renvoie `{}`, géré gracieusement par le trainer via `if "loss" in metrics`).
+  - **`save(path)`** : pickle `{seed, bit_generator_state, n_actions}` (cf. PLAN.md "save/load = dump/load d'un seed"). `bit_generator_state` est un dict NumPy déjà sérialisable, contient toute la position courante du PRNG — un `load` suivi de `act()` reprend EXACTEMENT là où le `save` s'est arrêté.
+  - **`load(path)`** : check `n_actions` vs checkpoint pour éviter qu'un eval avec un env différent (ex. `continuous=True` à 2D) charge un checkpoint discret incompatible. Lève `ValueError` clair.
+  - **Attribut `self.epsilon: float = 1.0`** : RandomAgent = 100 % exploration permanente. Permet au logger de remplir la colonne `epsilon` sans `None`.
+- **`configs/baseline/random.yaml`** :
+  - `run_name: random`, `seed: 0`, env `LunarLander-v3` avec wrapper `RecordEpisodeStats`.
+  - Tous les hyperparams `agent.network/gamma/lr/buffer_size/...` renseignés à des valeurs réalistes même si RandomAgent les ignore — `AgentConfig` exige tous les champs (volontaire, cf. v0.14.0). `epsilon.start = end = 1.0` pour cohérence sémantique ("exploration full").
+  - `training.total_steps: 20000` → ~200 épisodes (assez pour une moyenne stable, < 1 s de wall-time).
+  - `eval.episodes: 100` (matche le critère §7.1 PROJECT.md), `video_every: 25` (4 vidéos par eval, suffisant pour le rapport sans gonfler le dossier).
+- **Tests `test_random_agent.py` (10)** :
+  - `test_registered_under_random` : `AGENTS["random"] is RandomAgent`.
+  - `test_is_an_agent` : instance valide de l'ABC.
+  - `test_act_returns_in_range` : 200 appels, tous `int` ∈ `[0, n)`.
+  - `test_act_explores_all_actions` : sur 2000 tirages avec `n=4`, chaque action est sortie > 200 fois (test statistique loose : E = 500, marge x2.5).
+  - `test_reproducible_with_seed_all` : `seed_all(42)` → `RandomAgent()` → 50 actions ; idem deux fois → mêmes séquences.
+  - `test_different_seeds_differ` : `seed_all(0)` vs `seed_all(1)` → séquences distinctes.
+  - `test_observe_and_learn_are_safe` : pas de crash, `learn() == {}`.
+  - `test_save_load_roundtrip` : 17 actions, save, 30 actions captées comme "futur attendu", création d'un nouvel agent avec seed différent, load, 30 actions → identiques aux 30 captées. Vérifie que `bit_generator.state` capture bien la position du PRNG.
+  - `test_load_rejects_n_actions_mismatch` : save avec n=4, load dans agent n=2 → `ValueError`.
+  - `test_invalid_n_actions_raises` : `n_actions=0 → ValueError`.
+
+**Alternatives rejetées**
+
+- **`act` via `env.action_space.sample()` (déjà seeded par `build_env`)** : violerait l'isolation agent/env (`Agent.act(obs)` ne reçoit pas l'env). Aussi, `env.action_space.sample()` est seeded *une fois* à `build_env`, partagé avec d'autres callers potentiels — moins propre que notre RNG privé.
+- **`act` via `np.random.randint` global** : marche pour la reproductibilité mais corromprait l'état partagé NumPy (si le trainer / un wrapper l'utilise ailleurs). Le `Generator` privé est l'approche moderne recommandée par NumPy ≥ 1.17.
+- **Renvoyer `int(np.random.randint(...))` dans `act` plutôt que `Generator.integers`** : `Generator.integers` est la nouvelle API stable ; le `RandomState` legacy est marqué deprecated dans la doc NumPy. Pas de raison de coder en legacy.
+- **`save` au format JSON** : `bit_generator.state` est un dict imbriqué (`{"bit_generator": "PCG64", "state": {"state": <bignum>, "inc": <bignum>}, "has_uint32": ..., "uinteger": ...}`) avec des entiers Python potentiellement très grands. JSON serialise ça mais pickle est strict-equal sans gymnastique. Le `.pt` n'est pas torch-spécifique ici, juste l'extension convention du projet.
+- **`save` via `torch.save`** pour cohérence d'extension avec DQN : tirerait `torch` dans `random_agent.py` pour rien. Pickle stdlib suffit, RandomAgent reste libre de toute dep RL/ML.
+- **`act(greedy=True)` retourne `0`** : faux sens. "Greedy" suppose qu'il existe une distribution de préférence à maximiser ; pour un random uniform il n'y en a pas. Garder le tirage uniforme rend explicite que l'agent est intrinsèquement stochastique.
+- **`total_steps: 5000`** comme smoke : trop court pour avoir un `mean_return` stable (20k → 218 épisodes, std ~108, CI95 ±21 ; à 5k on n'aurait que ~55 épisodes, CI95 ±~30).
+- **`record_video: true` dans le YAML** : non — `eval.py` consomme cette clé seulement si on n'overrride pas via `--record-video`. Garder `false` par défaut évite de générer des vidéos systématiquement à chaque eval (utile pour CI / boucles seed). T1.4 fera l'export propre via la flag CLI.
+- **Mettre RandomAgent dans un fichier `baselines.py` partagé avec HeuristicAgent** : couplage gratuit. Le projet impose un fichier par agent (`agents/random_agent.py`, `agents/heuristic_agent.py`) pour que le registre reste découpé et que T5.X (Double DQN, PPO, SAC) ajoutent simplement un fichier de plus.
+- **Skip de `test_random_not_registered_yet` est un signal négatif** : non — c'est exactement le contrat documenté dans `test_base_agents.py::TestRegistry::test_random_not_registered_yet` : `self.skipTest("random agent already registered (T1.1 done)")`. Le test reste utile en CI tant que T1.1 n'est pas livré ; une fois ce ticket clos, il documente proprement le ticket franchi.
+
+**Impact**
+- **Phase 1 démarrée** : T1.2 (HeuristicAgent) suit le même pattern (un fichier d'agent + un YAML baseline + un test) sans toucher au trainer/eval/factory.
+- **T1.3 (validation termination réelle)** : `runs/random/0/eval_*.json` montre 0 UNKNOWN sur 100 épisodes, premier datapoint sur 200 (100 random + 100 heuristic) attendus par le ticket.
+- **T1.4 (vidéos baselines)** : `runs/random/0/videos/episode_0000.mp4` (≈ 25 KB) candidate pour `assets/videos/random.mp4` — à vérifier qualité visuelle puis copie.
+- **Phase 2 (DQN)** : RandomAgent fournit la baseline numérique. Quand T2.4 dira `mean_return ≥ 200`, on aura l'amplitude du gain (`200 - (-185) = +385` points).
+- **Dette technique** : aucune. RandomAgent est self-contained (40 lignes), n'introduit aucune dépendance, et est facilement détachable.
+
+**Non couvert volontairement**
+- **`HeuristicAgent`** → T1.2.
+- **Validation `UNKNOWN == 0`** comme assertion formelle → T1.3 (le run montre 0 mais ce n'est pas encore un test runtime).
+- **Export propre des vidéos baselines vers `assets/videos/`** → T1.4.
+- **Plots agrégés multi-seed** (un seul seed run ici) → T3.1 / T3.6 (pas pertinent pour RandomAgent, mais utile pour DQN).
+- **CLI `--record-video` exposé dans `train.py`** : non, c'est le rôle d'`eval.py` (T0.12). Les vidéos pendant le training n'ont pas de sens (politique encore en cours d'évolution).
+
+**Validation**
+```bash
+# Tests dédiés
+.venv/bin/python -m unittest tests.test_random_agent -v
+# → Ran 10 tests, OK
+
+# Suite complète (skip attendu : test_random_not_registered_yet)
+.venv/bin/python -m unittest discover tests/
+# → Ran 143 tests, OK (skipped=1)
+
+# Critère d'acceptation T1.1
+.venv/bin/python train.py --config configs/baseline/random.yaml --seed 0
+# → 218 episodes, mean_return_last_100 = -185.19, wall_time 1.0s
+
+.venv/bin/python eval.py --run runs/random/0 --episodes 100 --greedy --record-video
+# → mean_return = -185.70, std = 108.16, CI95 [-206.90, -164.51]
+# → termination_breakdown: 91% crash, 9% out_of_view
+# → 4 videos in runs/random/0/videos/
+```
+Run de référence : `runs/random/0/`.
+
+---
+
 ### v0.14.0 — 2026-05-11 — Smoke config + run end-to-end (T0.14)
 
 **Type** : feature

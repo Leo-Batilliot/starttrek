@@ -7,7 +7,7 @@ import imageio.v2 as iio
 import numpy as np
 
 
-DEFAULT_FPS: int = 30
+DEFAULT_FPS: int = 60
 
 
 def save_video(frames: Iterable[np.ndarray], path: Path | str, *, fps: int = DEFAULT_FPS) -> Path:
