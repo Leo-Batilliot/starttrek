@@ -87,6 +87,106 @@ Exemples de jalons attendus :
 
 <!-- Ajouter les futures entrées ci-dessous, en ordre antéchronologique (le plus récent en premier). -->
 
+### v0.14.0 — 2026-05-11 — Smoke config + run end-to-end (T0.14)
+
+**Type** : feature
+**Ticket** : T0.14
+**Phase** : 0 (Fondations)
+
+**Résumé**
+Ajout de `src/agents/noop_agent.py::NoOpAgent` (placeholder zéro-action enregistré sous `"noop"` dans `AGENTS`) ; auto-enregistrement via side-effect import dans `src/agents/__init__.py` ; mise à jour de `configs/smoke.yaml` pour pointer sur l'agent `noop` (au lieu de `random` qui sera fourni par T1.1) ; nettoyage d'un import parasite (`from tests.test_logger import METRIC_COLUMNS`) dans `train.py`. La commande `python train.py --config configs/smoke.yaml --seed 0` boucle 5000 steps sans crash et produit le dossier `runs/smoke/0/` complet (`config.yaml`, `metrics.csv`, `events.log`, `checkpoints/{step_*.pt, final.pt}`). Couverture par 7 tests `NoOpAgent` + 2 tests smoke end-to-end (suite totale **133 / 133 OK**).
+
+**Contexte / motivation**
+Dernier ticket de la Phase 0. Le but n'est pas algorithmique — c'est de **valider la chaîne complète** (config YAML → seed → factory env → registry agent → trainer → logger → checkpoints) en mettant tout bout-à-bout. Sans agent réel (T1.1 fournira `RandomAgent`), il fallait un placeholder qui (a) satisfait l'ABC `Agent`, (b) ne perturbe pas les futurs tests "T1.1 pas encore fait" (`test_random_not_registered_yet`), (c) ne traîne pas de dette technique une fois T1.1 livré. La fin de Phase 0 ouvre Phase 1 (baselines) sans dépendance restante côté infra.
+
+**Détails techniques**
+
+- **Fichiers créés** :
+  - `src/agents/noop_agent.py` — `NoOpAgent`.
+  - `tests/test_noop_agent.py` — 7 tests.
+  - `tests/test_smoke.py` — 2 tests (chargement config + run trainer end-to-end raccourci).
+- **Fichiers modifiés** :
+  - `src/agents/__init__.py` — `from . import noop_agent  # noqa: F401` (side-effect register).
+  - `configs/smoke.yaml` — `agent.name: noop` (au lieu de `random`, qui sera réintroduit dans `configs/baseline/random.yaml` à T1.1).
+  - `train.py` — suppression de `from tests.test_logger import METRIC_COLUMNS` (import depuis le dossier `tests/` dans du code prod = anti-pattern, et celui-ci shadowait silencieusement l'import canonique depuis `src.training.trainer`).
+- **`NoOpAgent(cfg: AgentConfig, *, n_actions: int)`** :
+  - Signature constructor identique à celle attendue par `train.py::main` (`agent_class(cfg.agent, n_actions=env.action_space.n)`) — préserve l'invariant "tout agent du registry est instanciable par le trainer sans cast spécial".
+  - `act(obs, *, greedy=False) → 0` : action 0 = "do nothing" sur LunarLander-v3 (cf. §3.2 PROJECT.md). Sortie Python `int` → le trainer la passe telle quelle à `env.step` (Gymnasium accepte `int` pour `Discrete`).
+  - `observe`, `learn`, `load` : no-ops. `learn()` retourne `{}` (le trainer gère déjà l'absence de clé `"loss"` via `if "loss" in metrics`).
+  - `save(path)` : crée un fichier vide (et `mkdir parents=True`) pour que les checkpoints existent quand le trainer fait `save_every` + `final.pt`. Permet à l'evaluator (`eval.py::_resolve_checkpoint`) de trouver `final.pt` sans erreur.
+  - Attribut `self.epsilon: float = 0.0` exposé pour que le trainer puisse logger la colonne `epsilon` via `getattr(agent, "epsilon", None)` sans forcer un `None` partout (les schedules viendront en T2.1).
+  - Validation : `n_actions <= 0 → ValueError` (fail loud, cohérent avec les autres constructeurs du projet).
+- **Auto-enregistrement** :
+  - `src/agents/__init__.py` importe `noop_agent` au chargement du package. Quand `train.py` fait `from src.agents.registry import AGENTS`, Python initialise d'abord `src.agents` (donc `__init__.py` → `noop_agent` → décorateur `@register_agent("noop")` → entrée dans `AGENTS`), puis charge `registry`. Au moment où `train.py` interroge `AGENTS["noop"]`, l'entrée est là.
+  - Pas de circularité : `noop_agent.py` n'importe que `src.agents.base` (terminal), `src.agents.registry` (terminal), et `src.utils.config` (terminal). Aucun de ces modules ne rappelle vers `src.agents.__init__`.
+  - Vérifié : `test_random_not_registered_yet` (TestRegistry) reste vert — il check `"random"`, pas `"noop"`.
+- **`configs/smoke.yaml`** — pointe désormais sur `agent.name: noop`. Les autres champs (`gamma`, `lr`, `batch_size`, etc.) restent renseignés à des valeurs réalistes pour qu'un `RunConfig` valide soit chargé même si `NoOpAgent` les ignore — utile pour ne pas dupliquer la config quand T1.1 réutilisera ce squelette.
+- **Tests `test_noop_agent.py` (7)** :
+  - `test_registered_under_noop` : `AGENTS["noop"]` est bien `NoOpAgent`.
+  - `test_is_an_agent` : instance valide de l'ABC `Agent`.
+  - `test_act_returns_zero` : `act(obs) == 0` et `act(obs, greedy=True) == 0`.
+  - `test_observe_and_learn_are_safe` : `observe(Transition)` ne lève rien, `learn() == {}`.
+  - `test_save_creates_file_and_load_no_op` : fichier créé même dans un dossier inexistant (mkdir parents) ; `load` ne lève rien.
+  - `test_invalid_n_actions_raises` : `n_actions=0 → ValueError`.
+  - `test_exposes_epsilon_attribute` : l'attribut `epsilon` existe pour le logger.
+- **Tests `test_smoke.py` (2)** :
+  - `test_smoke_config_loads` : `load_config("configs/smoke.yaml")` renvoie un `RunConfig` cohérent.
+  - `test_trainer_runs_end_to_end_short` : version raccourcie (400 steps, save_every=200) du smoke pour rester rapide en CI. Construit env via factory, instancie NoOp, fait tourner `Trainer.run()`, puis vérifie : `summary["episodes"] > 0`, présence de `config.yaml`/`metrics.csv`/`events.log`, `checkpoints/final.pt` créé, header `metrics.csv` = `METRIC_COLUMNS`, chaque `termination_reason` est dans l'enum.
+- **Validation manuelle** (commande exacte du critère d'acceptation) :
+  ```bash
+  python train.py --config configs/smoke.yaml --seed 0 --out-dir /tmp/smoke_runs
+  ```
+  Résultat observé : 5000 steps, 70 épisodes, wall_time 0.2 s, dossier `runs/smoke/0/` complet (config.yaml 627 B, metrics.csv 3.5 KB, events.log 12 KB, 6 checkpoints).
+
+**Alternatives rejetées**
+
+- **Anticiper T1.1 et coder directement `RandomAgent`** : casserait l'ordre des tickets. `RandomAgent` est livré par T1.1 avec son propre config baseline (`configs/baseline/random.yaml`) et son ticket de validation (T1.4 produit `assets/videos/random.mp4`). Mélanger T0.14 + T1.1 brouillerait la trace dans `DOCUMENTATION.md` et compliquerait la rétrospective.
+- **Enregistrer `NoOpAgent` sous le nom `"random"`** : tentant pour ne pas toucher `smoke.yaml`, mais ça casserait `test_random_not_registered_yet` qui sert de contrat "T1.1 pas encore livré". Faux gain.
+- **Ne pas auto-importer `noop_agent` dans `__init__.py`** et exiger `import src.agents.noop_agent` explicitement dans `train.py` : marche mais reproduit le travail à chaque nouvel agent (T1.1 random, T1.2 heuristic, T2.1 dqn, …). Centraliser dans `__init__.py` une fois et oublier. Les autres tickets ajouteront leur ligne dans le même fichier.
+- **Importer dynamiquement via `importlib` + walk du dossier `src/agents/`** : sur-conception. Une liste statique d'imports est lisible, traçable par `git blame`, et donne une erreur claire si un module manque.
+- **Faire `NoOpAgent.save(path)` un vrai no-op (pas de fichier)** : casserait l'invariant "post-training il existe un `final.pt`" attendu par `eval.py::_resolve_checkpoint` (Phase 1 utilisera `eval.py` sur ce run smoke). Un fichier vide est gratuit et marque proprement l'événement.
+- **Action retournée par `act` = `n_actions // 2`** ou aléatoire : "no-op" implique zéro intent. Action 0 sur LunarLander = "do nothing engines off", la sémantique la plus proche d'un agent inactif. Aléatoire = pseudo-RandomAgent (T1.1).
+- **Garder l'import `from tests.test_logger import METRIC_COLUMNS`** : code prod qui importe depuis `tests/` est un anti-pattern (couplage inversé, risque qu'un changement de tests casse la prod). Les deux constantes ont la même valeur — la version canonique est dans `src.training.trainer` (déjà importée à la ligne au-dessus). Le doublon était simplement un copier-coller à nettoyer.
+- **Faire tourner le test smoke sur 5000 steps** (au lieu de 400) : trop lent en CI (~0.2 s ici mais l'env LunarLander a une variance forte selon la machine). Le critère d'acceptation 5000-step est validé manuellement et documenté ; le test unitaire en exécute 400 pour rester < 1 s.
+- **Skip du smoke test si Box2D pas dispo** : le projet pin `gymnasium[box2d]` dans `requirements.txt` (cf. v0.1.0). On assume l'environnement est correctement installé. Pas de fallback silencieux.
+
+**Impact**
+- **Phase 0 close** : la chaîne CLI tourne end-to-end avec un agent factice ; les 9 critères de fin de Phase 0 (cf. PLAN.md §"Fin de Phase 0") sont remplis.
+- **T1.1 (RandomAgent)** : démarrera sur un terrain solide — il suffira d'ajouter `src/agents/random_agent.py` + `from . import random_agent` dans `src/agents/__init__.py` + `configs/baseline/random.yaml`. Aucun changement de signature ni de trainer.
+- **T1.2 (HeuristicAgent)** : même pattern.
+- **T2.1 (DQN)** : idem, et héritera de la chaîne de checkpoints/eval déjà rodée par ce smoke.
+- **CI / dev loop** : la 134-test suite (incluant le smoke unitaire) tourne en ~4 s — feedback rapide.
+- **Dette technique introduite** : aucune. `NoOpAgent` est self-contained, supprimable trivialement quand il deviendra obsolète (ou conservable comme outil de diagnostic infra — il sert de smoke check permanent).
+
+**Non couvert volontairement**
+- **`RandomAgent` (uniform over `action_space`)** → T1.1.
+- **`HeuristicAgent` (PD-style controller)** → T1.2.
+- **Validation de `termination.classify` sur trajectoires réelles** → T1.3 (le smoke produit déjà du `crash`/`out_of_view` réel sur `metrics.csv` ; T1.3 vérifiera formellement `UNKNOWN == 0`).
+- **Eval pendant training** : le trainer a un `if global_step % eval_every == 0: pass` — c'est volontaire (Phase 0 ne fait pas d'eval périodique en cours de training, T2.x le branchera quand un agent réel apprend).
+- **Suppression de `NoOpAgent` après T1.1** : non, on le garde — utile pour vérifier que la chaîne reste intacte au fil des refactors, et coûte 30 lignes.
+- **`summary.json` écrit sur disque** : `Trainer.run()` renvoie un dict mais ne le persiste pas (T2.4 le fera quand il y aura quelque chose d'intéressant à mesurer — `mean_return_last_100`, `solved`, etc.).
+
+**Validation**
+```bash
+# Tests dédiés
+.venv/bin/python -m unittest tests.test_noop_agent -v
+# → Ran 7 tests, OK
+
+.venv/bin/python -m unittest tests.test_smoke -v
+# → Ran 2 tests, OK
+
+# Suite complète
+.venv/bin/python -m unittest discover tests/
+# → Ran 133 tests, OK
+
+# Critère d'acceptation T0.14 (commande exacte du PLAN.md)
+.venv/bin/python train.py --config configs/smoke.yaml --seed 0 --out-dir /tmp/smoke_runs
+# → 5000 steps, 70 episodes, wall_time 0.2s
+# → /tmp/smoke_runs/smoke/0/{config.yaml, metrics.csv, events.log, checkpoints/{step_1000..5000.pt, final.pt}}
+```
+
+---
+
 ### v0.13.0 — 2026-05-11 — Vidéo + plotting stubs (T0.13)
 
 **Type** : feature

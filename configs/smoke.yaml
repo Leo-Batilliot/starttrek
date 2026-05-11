@@ -10,7 +10,7 @@ env:
 
 
 agent:
-  name: random
+  name: noop
   network:
     hidden_sizes: [128, 128]
     activation: relu

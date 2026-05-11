@@ -12,7 +12,6 @@ from src.training.trainer import Trainer, METRIC_COLUMNS
 from src.utils.config import load_config, save_config
 from src.utils.logger import Logger
 from src.utils.seeding import seed_all
-from tests.test_logger import METRIC_COLUMNS
 
 
 def parse_args() -> argparse.Namespace:

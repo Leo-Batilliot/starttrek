@@ -212,7 +212,7 @@ Chaque ticket a : **objectif** · **livrable** · **critère d'acceptation** (v�
   - **Livrable** : `src/utils/video.py`, `src/utils/plotting.py`.
   - **Critère d'acceptation** : `save_video([np.zeros((400, 600, 3), dtype=np.uint8)] * 30, "test.mp4")` produit un MP4 lisible ; `plot_returns(csv, png)` produit un PNG non-vide sur un metrics.csv factice.
 
-- [ ] **T0.14 — Config smoke + run end-to-end**
+- [x] **T0.14 — Config smoke + run end-to-end**
   - **Objectif** : `configs/smoke.yaml` minimal qui fait tourner le trainer avec un agent no-op (en attendant T1.1) ; valide toute la chaîne Phase 0.
   - **Livrable** : `configs/smoke.yaml`.
   - **Critère d'acceptation** : `python train.py --config configs/smoke.yaml --seed 0` s'exécute 5000 steps sans crash, produit le dossier `runs/smoke/0/` complet, le test `python -m unittest discover tests/` passe en vert.
