@@ -87,6 +87,98 @@ Exemples de jalons attendus :
 
 <!-- Ajouter les futures entrées ci-dessous, en ordre antéchronologique (le plus récent en premier). -->
 
+### v0.13.0 — 2026-05-11 — Vidéo + plotting stubs (T0.13)
+
+**Type** : feature
+**Ticket** : T0.13
+**Phase** : 0 (Fondations)
+
+**Résumé**
+Ajout de `src/utils/video.py::save_video(frames, path, *, fps=30)` (encodage MP4 via `imageio.v2.mimwrite`) et de `src/utils/plotting.py` avec quatre fonctions stubs (`plot_returns`, `plot_loss`, `plot_epsilon`, `plot_termination_breakdown`) qui lisent `metrics.csv` et produisent des PNG. Couverture par 9 tests vidéo + 7 tests plotting (suite totale 124 / 124 OK).
+
+**Contexte / motivation**
+Deux livrables prévus par §5 et §8 de `PROJECT.md` dépendent de ces deux modules : les vidéos (random / heuristic / trained — Phase 1 et Phase 2) et les plots de training (`returns_per_episode.png`, `loss.png`, `epsilon.png`, `termination_breakdown.png` — T2.5). `src/training/evaluator.py` (T0.12) référençait déjà `from src.utils.video import save_video` dans une `try/except ImportError`, donc dès ce ticket la capture vidéo de l'évaluateur devient effective sans avoir à toucher au trainer ou à l'evaluator. Le ticket est explicitement marqué « implémentation minimale » dans `PLAN.md` — les enrichissements (CI95 shaded, paired plots) viendront avec T3.6 quand on aura des runs réels.
+
+**Détails techniques**
+
+- **Fichiers créés** :
+  - `src/utils/video.py` — `save_video()`.
+  - `src/utils/plotting.py` — 4 fonctions `plot_*`, helpers privés `_read_columns`, `_floats`, `_rolling_mean`, `_save_fig`.
+  - `tests/test_video.py` — 9 tests (TestSaveVideo).
+  - `tests/test_plotting.py` — 7 tests (TestPlotting).
+- **`save_video(frames, path, *, fps=30) → Path`** :
+  - Encodage via `imageio.v2.mimwrite(str(path), frames, fps=fps, macro_block_size=1)`. Le kwarg `macro_block_size=1` désactive le padding automatique imposé par ffmpeg sur les dimensions non multiples de 16, ce qui permet d'écrire des frames de taille arbitraire (utile pour les tests synthétiques et les renders Gymnasium qui ne sont pas garantis 16-aligned).
+  - Validation à la frontière : `fps > 0`, path avec extension, `frames` non vide, premier frame `(H, W, 3)`, toutes les frames identiques en shape, dtype forcé `uint8` (cast `astype(uint8, copy=False)` quand nécessaire).
+  - `path.parent.mkdir(parents=True, exist_ok=True)` — l'evaluator passe `runs/<run>/videos/episode_NNNN.mp4` et ce dossier peut ne pas exister.
+  - Retourne le `Path` final pour permettre à l'evaluator de le push dans `result["videos"]`.
+- **`plotting.py`** :
+  - **Backend `Agg` forcé** (`matplotlib.use("Agg")` avant l'import de `pyplot`) — projet headless, aucun `plt.show()`, important pour CI et pour les WSL sans display.
+  - Lecture CSV via stdlib `csv.DictReader` + parsing en `np.float64` via `_floats()` (cellules vides → `NaN`). Aucune dépendance à `pandas`.
+  - `_read_columns(csv, cols)` : `FileNotFoundError` si CSV absent, `ValueError` si une colonne demandée manque. Fail loud — plus utile qu'un plot vide silencieux.
+  - **`plot_returns(csv, out, *, window=100)`** : trace les returns bruts (alpha 0.4) + rolling mean (window=100) + ligne horizontale `y=200` (seuil "solved" §7.1 PROJECT.md). Convolution NumPy (`np.convolve` mode `valid`) — plus simple que pandas rolling et zéro dépendance.
+  - **`plot_loss(csv, out)`** : trace `loss_mean` en filtrant les NaN (les early episodes avant `min_buffer` n'ont pas de loss).
+  - **`plot_epsilon(csv, out)`** : trace `epsilon` borné `[0, 1.05]`.
+  - **`plot_termination_breakdown(csv, out)`** : compte les `termination_reason`, normalise en fraction, bar chart dans l'ordre canonique (`land`, `crash`, `out_of_view`, `sleep`, `truncated`, `unknown`) avec couleurs distinctes et étiquettes numériques au-dessus de chaque barre.
+  - Chaque fonction retourne le `Path` du PNG produit et utilise `_save_fig` qui force `tight_layout()`, `dpi=120`, et `plt.close(fig)` (évite la fuite mémoire de figures matplotlib non fermées sur des séries de runs).
+- **Tests vidéo (9)** : MP4 écrit + non vide, MP4 relisible par `imageio.mimread`, `mkdir` parent récursif, `[]` raise, shape `(H, W, 4)` raise, frames hétérogènes raise, `fps=0` raise, path sans extension raise, retour `Path` cohérent. Frames synthétiques 32×48×3 uint8 — taille volontairement modeste pour garder les tests rapides (< 1 s chacun).
+- **Tests plotting (7)** : chacun des 4 plots écrit un PNG (magic bytes `\x89PNG` vérifiés, taille > 0) ; `mkdir` parent récursif sur `plot_returns` ; CSV absent → `FileNotFoundError` ; colonne manquante → `ValueError`. Synthèse d'un `metrics.csv` de 200 lignes via `csv.DictWriter` avec les 11 colonnes officielles (cf. §8 PROJECT.md).
+
+**Alternatives rejetées**
+
+- **Utiliser `imageio.v3` (interface stream-based)** : plus moderne mais l'API `iio.imwrite(path, ndarray)` requiert un seul tableau 4D `(T, H, W, 3)` ou un générateur via `imopen`. L'API v2 `mimwrite(path, list_of_frames)` est strictement équivalente côté sortie, plus simple à appeler et déjà la voie suggérée par la doc officielle pour les MP4. Pas de gain à migrer.
+- **Tirer `moviepy`** : sur-dimensionné. `imageio + imageio-ffmpeg` est déjà dans `requirements.txt` (T0.1) et couvre 100 % du besoin (encoder une liste de frames RGB en MP4). Ajouter `moviepy` introduirait des deps transitives (`decorator`, `proglog`, `tqdm`) non justifiées.
+- **Wrapper `RecordVideo` Gymnasium** : déjà rejeté en T0.7 (non couvert volontairement). L'evaluator (T0.12) consomme `env.render()` puis appelle `save_video(frames, path)` — donne contrôle total sur FPS, dossier, nom de fichier, sans dépendre du naming auto-incrémenté du wrapper.
+- **Padding automatique des frames à un multiple de 16** plutôt que `macro_block_size=1` : pénalise la qualité (frames étirées) et masque les vraies dimensions du render. `macro_block_size=1` est explicite et documenté chez imageio.
+- **Tolérer un `fps` flottant** : `imageio.mimwrite` l'accepte mais la sémantique d'un MP4 à 29.97 fps n'apporte rien ici — strict `int > 0` est plus simple à valider.
+- **Utiliser `pandas` pour parser `metrics.csv`** dans `plotting.py` : ajoute une dépendance lourde (~50 MB) pour ce qu'un `csv.DictReader` + `np.asarray` font en 10 lignes. Refusé : `requirements.txt` est intouchable sauf justification forte (§2.1 PROJECT.md).
+- **Plot agrégé multi-seed avec CI95 shading** : ticket T3.6 explicite. Ici on reste sur le single-run.
+- **`plot_episode_length` (5ᵉ fonction)** : non listée dans T0.13. T2.5 demandera `episode_length.png` mais l'ajout sera trivial (copie de `plot_returns`). Ne pas surimplémenter (règle "no premature abstraction").
+- **Backend `module://matplotlib_inline.backend_inline`** ou autre : `Agg` est le bon choix headless universel.
+- **Levée d'erreur sur cellules vides** dans `_floats` : ces vides existent légitimement (loss_mean avant `min_buffer`, epsilon dans certains setups). On les mappe à `NaN` et on filtre via `np.isnan` au tracé.
+- **Sauvegarder en `.pdf` ou `.svg`** : §5 PROJECT.md liste explicitement les plots en PNG. Pas de débat.
+
+**Impact**
+- **T0.12 (Evaluator)** : le bloc `try: from src.utils.video import save_video except ImportError: return None` qui était inerte devient effectif — les vidéos seront effectivement écrites lors d'un `python eval.py --record-video`.
+- **T1.4 (Vidéos baselines)** : Random + Heuristic peuvent désormais sortir leurs MP4 sans changer de code.
+- **T2.5 (Plots de training DQN)** : les 4 PNG seront générés en exploitant `runs/dqn_baseline/0/metrics.csv` ; il restera à ajouter `plot_episode_length` (copie de `plot_returns`, ~10 lignes).
+- **T2.6 / T4.3 (showcase)** : `save_video` accepte directement la liste de frames retournée par `env.render(render_mode="rgb_array")`.
+- **T3.6 (plots multi-seeds + CI95)** : enrichira `plot_returns` ou ajoutera `plot_returns_multi_seed` à côté. La structure modulaire (chaque plot = une fonction publique + helpers privés) rend l'extension non-cassante.
+- **Aucune dette technique** : aucune dépendance ajoutée, modules auto-contenus, fail loud sur entrées invalides.
+
+**Non couvert volontairement**
+- **`plot_episode_length`** → T2.5.
+- **CI95 shaded multi-seed** → T3.6.
+- **Paired plots ablation A vs baseline** → T3.3 / T3.4 / T3.6.
+- **Encoder choice (h264 / h265 / mp4v)** : laissé au défaut `imageio-ffmpeg` (libx264 sur ffmpeg système). Si la taille des MP4 dépasse les 5 MB en T1.4 / T2.6, on bumpera via un kwarg `codec` mais pas avant.
+- **`with` context manager** pour `save_video` : la fonction écrit en une passe, pas de ressource à libérer côté caller.
+- **Logging des fichiers écrits** : volontairement silencieux ; l'evaluator (T0.12) trace déjà dans `result["videos"]`.
+
+**Validation**
+```bash
+# Tests dédiés
+.venv/bin/python -m unittest tests.test_video -v
+# → Ran 9 tests, OK
+
+.venv/bin/python -m unittest tests.test_plotting -v
+# → Ran 7 tests, OK
+
+# Suite complète
+.venv/bin/python -m unittest discover tests/
+# → Ran 124 tests, OK
+
+# Smoke check vidéo (le critère d'acceptation PLAN.md)
+.venv/bin/python -c "
+import numpy as np
+from src.utils.video import save_video
+frames = [np.zeros((400, 600, 3), dtype=np.uint8)] * 30
+out = save_video(frames, '/tmp/test_t013.mp4')
+print('wrote', out, out.stat().st_size, 'bytes')
+"
+# → wrote /tmp/test_t013.mp4 <non-zero> bytes
+```
+
+---
+
 ### v0.7.0 — 2026-04-27 — Env factory + wrappers (T0.7)
 
 **Type** : feature

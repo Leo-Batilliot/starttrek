@@ -207,7 +207,7 @@ Chaque ticket a : **objectif** · **livrable** · **critère d'acceptation** (v�
   - **Livrable** : `src/training/evaluator.py`, `eval.py` (entrypoint CLI : `--run`, `--episodes`, `--greedy`, `--record-video`).
   - **Critère d'acceptation** : `python eval.py --run runs/smoke/0 --episodes 10 --greedy` produit `runs/smoke/0/eval_<timestamp>.json` avec les champs attendus ; zéro crash sur agent `RandomAgent`.
 
-- [ ] **T0.13 — `utils/video.py` + `utils/plotting.py` (stubs)**
+- [x] **T0.13 — `utils/video.py` + `utils/plotting.py` (stubs)**
   - **Objectif** : `save_video(frames, path)` via `imageio` ; `plot_returns(csv_path, out_path)`, `plot_loss(...)`, `plot_epsilon(...)`, `plot_termination_breakdown(...)`. Implémentation minimale — les plots détaillés viendront avec les runs réels.
   - **Livrable** : `src/utils/video.py`, `src/utils/plotting.py`.
   - **Critère d'acceptation** : `save_video([np.zeros((400, 600, 3), dtype=np.uint8)] * 30, "test.mp4")` produit un MP4 lisible ; `plot_returns(csv, png)` produit un PNG non-vide sur un metrics.csv factice.
