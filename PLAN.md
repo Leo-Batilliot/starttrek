@@ -230,7 +230,7 @@ Chaque ticket a : **objectif** · **livrable** · **critère d'acceptation** (v�
   - **Livrable** : `src/agents/random_agent.py` + entrée dans `AGENTS` + `configs/baseline/random.yaml`.
   - **Critère d'acceptation** : `python train.py --config configs/baseline/random.yaml --seed 0` produit un `runs/random/0/` avec `mean_return ≈ -150` (ordre de grandeur attendu d'une politique aléatoire sur LunarLander) ; vidéo sauvegardée.
 
-- [ ] **T1.2 — `agents/heuristic_agent.py`**
+- [x] **T1.2 — `agents/heuristic_agent.py`**
   - **Objectif** : politique PD-style sur (`theta`, `theta_dot`, `v_y`, `x`) — typiquement : si penchant à gauche/droite → fire side thruster opposé ; si `v_y` trop négatif → fire main ; sinon do nothing. Formule et coefficients documentés dans le docstring et dans `DOCUMENTATION.md`.
   - **Livrable** : `src/agents/heuristic_agent.py` + entrée dans `AGENTS` + `configs/baseline/heuristic.yaml`.
   - **Critère d'acceptation** : `mean_return ≥ 0` sur 100 épisodes greedy (une heuristique raisonnable bat nettement random sans atteindre forcément 200) ; termination_breakdown montre une proportion `LAND` visible.

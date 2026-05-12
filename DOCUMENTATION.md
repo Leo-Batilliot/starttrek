@@ -87,6 +87,117 @@ Exemples de jalons attendus :
 
 <!-- Ajouter les futures entrées ci-dessous, en ordre antéchronologique (le plus récent en premier). -->
 
+### v1.2.0 — 2026-05-12 — HeuristicAgent (T1.2)
+
+**Type** : feature
+**Ticket** : T1.2
+**Phase** : 1 (Baselines)
+
+**Résumé**
+Ajout de `src/agents/heuristic_agent.py::HeuristicAgent` (contrôleur PD-style sur l'obs 8-dim de LunarLander-v3, sans état, sans apprentissage) enregistré sous `"heuristic"` dans le registry. Auto-import dans `src/agents/__init__.py`. Création de `configs/baseline/heuristic.yaml` (20 000 steps, eval 100 épisodes). Couverture par 14 tests (TestHeuristicAgent). Run de référence `runs/heuristic/0/` : **mean_return = 252.83** sur 100 épisodes greedy (CI95 [237.38, 268.29]), termination_breakdown **58 % land** / 2 % crash / 2 % out_of_view / 11 % sleep / 1 % truncated / **26 % unknown** — largement au-dessus du critère T1.2 (`mean_return ≥ 0` + proportion `LAND` visible). Le 26 % `unknown` est attendu et constitue précisément le matériel d'entrée de T1.3 (validation de `termination.classify` sur trajectoires réelles).
+
+**Contexte / motivation**
+Deuxième baseline obligatoire (§6.1 PROJECT.md). Trois fonctions :
+1. **Borne haute "sans apprentissage"** — une politique closed-form bien calibrée doit poser le lander régulièrement. Si plus tard le DQN ne dépasse pas l'heuristique, on aura mal réglé l'algorithme : l'heuristique fixe le niveau "raisonnable" que tout agent appris devrait au moins égaler. Ici le DQN visera ≥ 200 ; on a déjà 253 avec une formule fermée — l'écart entre heuristique et DQN sera surtout un gain en robustesse/régularité, pas en plafond.
+2. **Stress-test de `termination.classify` sur trajectoires "qui se terminent par un atterrissage"** — RandomAgent ne produisait quasi aucun `LAND` (91 % crash, 9 % out_of_view, 0 % land). L'heuristique en produit 58 %, ce qui exerce enfin la branche `LAND` du classifier sur des trajectoires réelles. Et révèle (volontairement) le bug ouvert : 26 % de fins d'épisodes sont classées `UNKNOWN`, ce qui aurait été invisible avec RandomAgent seul.
+3. **Vidéo "ce qu'un bon agent fait"** — `runs/heuristic/0/videos/` contient 4 MP4 d'atterrissages réussis, utiles comme matériel visuel pour le rapport et la soutenance.
+
+**Détails techniques**
+
+- **Fichiers créés** :
+  - `src/agents/heuristic_agent.py` — `HeuristicAgent`.
+  - `configs/baseline/heuristic.yaml` — config baseline.
+  - `tests/test_heuristic_agent.py` — 14 tests.
+- **Fichiers modifiés** :
+  - `src/agents/__init__.py` — ajout de `from . import heuristic_agent` (side-effect register).
+- **Politique `HeuristicAgent._heuristic(obs)`** (contrôleur PD à 2 boucles imbriquées) :
+  - **Décomposition de l'obs** : `[x, y, v_x, v_y, theta, theta_dot, leg1, leg2]` (cf. §3.2 PROJECT.md).
+  - **Boucle d'orientation** :
+    - `angle_targ = clip(0.5*x + 1.0*v_x, ±0.4)` — on penche le lander dans le sens opposé à la dérive horizontale (proportionnel à x et v_x). Le clip à ±0.4 rad (~23°) évite les pencher excessifs qui font perdre le contrôle.
+    - `angle_todo = 0.5*(angle_targ - theta) - 1.0*theta_dot` — terme P sur l'erreur d'angle + terme D sur la vitesse angulaire (anti-oscillation).
+  - **Boucle de hauteur** :
+    - `hover_targ = 0.55*|x|` — altitude de "hover" qui augmente quand on est loin du centre. Idée : si on est loin, on garde de l'altitude pour avoir le temps de manœuvrer ; si on est centré, on peut descendre.
+    - `hover_todo = 0.5*(hover_targ - y) - 0.5*v_y` — PD sur l'altitude.
+  - **Override sur contact** : `leg1 or leg2 → angle_todo = 0, hover_todo = -0.5*v_y`. Une fois posé, on ne corrige plus l'angle (les pattes amortissent) et on freine la vitesse verticale restante.
+  - **Décision** :
+    - `hover_todo > |angle_todo| and hover_todo > 0.05` → `2` (main engine, priorité à la chute si urgente).
+    - sinon `angle_todo < -0.05` → `3` (right thruster), `> 0.05` → `1` (left thruster).
+    - sinon `0` (do nothing).
+  - **Coefficients exposés comme constantes module-level** (`ANGLE_TARG_GAIN_X`, `ANGLE_KP`, etc.) pour permettre à un futur ticket d'ablation de les surcharger sans toucher au corps de la fonction. Pas exposés dans `AgentConfig` — l'heuristique est une référence, pas un objet à tuner.
+- **`HeuristicAgent(cfg, *, n_actions)`** :
+  - `n_actions != 4 → ValueError`. L'heuristique encode hard-coded les ids d'action {0, 1, 2, 3} de LunarLander discret ; un env continu (`continuous=True`, 2D continu) ou un env à action_space différent n'a pas de mapping cohérent.
+  - `act(obs)` : valide `obs.shape == (8,)` (fail loud), retourne `int` Python (cohérent avec `RandomAgent` et `NoOpAgent`, le trainer passe tel quel à `env.step`).
+  - `observe`/`learn` : no-ops (`learn() → {}`).
+  - `save` : crée un fichier vide (idem `NoOpAgent`) pour satisfaire le pipeline de checkpoints. Aucun état à sérialiser : la politique est stateless, ses coefficients sont des constantes module-level.
+  - `load` : no-op.
+  - `epsilon = 0.0` exposé pour le logger (RandomAgent expose `1.0`, NoOpAgent `0.0`, DQN exposera son ε courant — colonne `epsilon` stable dans `metrics.csv`).
+  - **`act(greedy)` ignore le flag** : l'heuristique est purement déterministe. `act(obs)` et `act(obs, greedy=True)` retournent strictement la même action — testé.
+- **`configs/baseline/heuristic.yaml`** :
+  - Calque structurel sur `configs/baseline/random.yaml` (mêmes clés, même schéma `AgentConfig`).
+  - `epsilon.start = end = 0.0` (sémantique : 0 % exploration — politique déterministe).
+  - Le reste (`network`, `gamma`, `lr`, `buffer_size`, `target_update`, `grad_clip`) renseigné à des valeurs neutres car `AgentConfig` exige tous les champs (cf. v0.14.0). Aucun de ces champs n'est lu par `HeuristicAgent`.
+  - `training.total_steps: 20000` → 78 épisodes en pratique (épisodes longs car le lander vole/hover plus longtemps avant terminaison vs RandomAgent qui crashe vite). Suffisant pour le mean_return rapporté.
+  - `eval.episodes: 100` (critère §7.1 PROJECT.md), `video_every: 25` (4 vidéos sur 100 épisodes).
+- **Tests `test_heuristic_agent.py` (14)** :
+  - `test_registered_under_heuristic` : `AGENTS["heuristic"] is HeuristicAgent`.
+  - `test_is_an_agent` : instance valide de l'ABC.
+  - `test_invalid_n_actions_raises` : `n_actions ∈ {0, 2} → ValueError` (4 obligatoire).
+  - `test_act_returns_int_in_range` : 200 obs aléatoires → tous `int ∈ [0, 4)`.
+  - `test_act_is_deterministic` : 100 obs → `act(o)` == `act(o)` == `act(o, greedy=True)` (politique sans état + sans aléa).
+  - `test_act_rejects_wrong_shape` : `obs.shape == (7,) → ValueError`.
+  - `test_falling_too_fast_fires_main` : obs(y=0, vy=-1) → action 2 (chute rapide à l'altitude cible → main engine).
+  - `test_drifting_right/left_fires_correcting_thruster` : obs(x=±0.5, vx=±0.2) → action 1/3 (correction d'orientation).
+  - `test_stable_centered_does_nothing` : obs nulle → action 0.
+  - `test_legs_contact_neutralizes_angle` : `legs=1` avec orientation pourrie → action 0 (override de l'override : on ne corrige plus l'angle quand posé).
+  - `test_observe_and_learn_are_safe` : pas de crash, `learn() == {}`.
+  - `test_save_load_roundtrip` : save → load → politique inchangée (stateless).
+  - `test_exposes_epsilon_attribute` : `agent.epsilon == 0.0`.
+
+**Alternatives rejetées**
+
+- **Coefficients dans `AgentConfig.heuristic`** : aurait nécessité d'étendre le dataclass typé avec un sous-champ optionnel. Inutilement intrusif — l'heuristique est une référence figée, pas un agent à tuner. Si plus tard on veut faire une ablation sur les gains, on rajoutera une sous-classe `TunedHeuristicAgent` plutôt que de polluer `AgentConfig`.
+- **Implémenter une variante stochastique pour `act(greedy=False)`** (ex. bruit gaussien sur les seuils) : double l'effort de test, ajoute du bruit non motivé. L'heuristique est censée être un **niveau de référence reproductible** ; l'aléa appartient à RandomAgent.
+- **Reposer sur `env.action_space.sample()` ou tout autre fallback** : l'heuristique doit produire une décision sur **toutes** les observations, sinon elle perd son intérêt d'oracle. Pas de "je sais pas → random".
+- **Coefficients alternatifs** (ex. plus agressifs sur l'angle) : la combinaison choisie est le PD bien connu de l'exemple Gymnasium `lunar_lander.heuristic`, déjà éprouvée. Pas de raison de re-tuner sans grille systématique, et un tuning systématique est hors scope (§2.1 PROJECT.md interdit le tuning automatique).
+- **Tolérer `n_actions != 4` en mode "best effort"** (ex. clip de l'action à `n_actions-1`) : faux silence. Mieux vaut un `ValueError` clair que de retourner des actions absurdes en cas de mauvaise config.
+- **Conserver le `unknown` 26 % sans note** : non, il est explicitement signalé dans cette entrée comme **input attendu de T1.3** (qui doit ramener UNKNOWN à 0). Le ticket T1.2 a un critère "proportion LAND visible" (58 %, validé), pas "UNKNOWN == 0" (porté par T1.3).
+
+**Impact**
+- **T1.3 (validation termination réelle)** débloqué — on a maintenant les 100 épisodes heuristic exigés par le ticket, qui montrent un bug observable du classifier (26 % UNKNOWN). T1.3 va consister à inspecter ces cas dans `metrics.csv` et raffiner `classify(info, reward, state, terminated, truncated)`.
+- **T1.4 (vidéos baselines)** débloqué — `runs/heuristic/0/videos/episode_*.mp4` candidates pour `assets/videos/heuristic.mp4`.
+- **Phase 2 (DQN)** : on a maintenant **deux** bornes — -185 (random) et +253 (heuristic). Un DQN qui atterrit entre les deux est mal réglé. Le critère DQN ≥ 200 est en dessous de l'heuristique en plafond, mais l'enjeu est la régularité (CI95) et la robustesse au vent (T5.8), pas le plafond brut.
+- **Dette technique** : aucune. HeuristicAgent est self-contained (~85 lignes), stateless, sans dépendance hors numpy.
+
+**Non couvert volontairement**
+- **Validation `UNKNOWN == 0` comme assertion runtime** → T1.3.
+- **Export propre des vidéos baselines vers `assets/videos/`** → T1.4.
+- **Multi-seed runs** → l'heuristique est déterministe et l'env LunarLander a un aléa de spawn ; faire seeds 0..4 pour heuristique n'apporterait que la variance de spawn, qui est déjà capturée par les 100 épisodes du single run. Pas pertinent (contrairement au DQN où la variance d'init des poids justifie 5 seeds).
+- **Tuning des coefficients PD** : hors sujet — l'heuristique est une référence, pas un agent à optimiser.
+
+**Validation**
+```bash
+# Tests dédiés
+.venv/bin/python -m unittest tests.test_heuristic_agent -v
+# → Ran 14 tests, OK
+
+# Suite complète (skip attendu : test_random_not_registered_yet)
+.venv/bin/python -m unittest discover tests/
+# → Ran 157 tests, OK (skipped=1)
+
+# Critère d'acceptation T1.2
+.venv/bin/python train.py --config configs/baseline/heuristic.yaml --seed 0
+# → 78 episodes, mean_return_last_100 = 259.55, wall_time 1.1s
+
+.venv/bin/python eval.py --run runs/heuristic/0 --episodes 100 --greedy --record-video
+# → mean_return = 252.83, std = 78.86, CI95 [237.38, 268.29]
+# → solved (≥ 200 over 100) : True
+# → termination_breakdown: 58% land, 2% crash, 2% out_of_view, 11% sleep, 1% truncated, 26% unknown
+# → 4 videos in runs/heuristic/0/videos/
+```
+Run de référence : `runs/heuristic/0/`.
+
+---
+
 ### v1.1.0 — 2026-05-11 — RandomAgent (T1.1)
 
 **Type** : feature
