@@ -87,6 +87,47 @@ Exemples de jalons attendus :
 
 <!-- Ajouter les futures entrées ci-dessous, en ordre antéchronologique (le plus récent en premier). -->
 
+### v1.4.0 — 2026-05-16 — Assets vidéos des baselines (T1.4)
+
+**Type** : infra (livrable assets — aucun code modifié)
+**Ticket** : T1.4
+**Phase** : 1 (Baselines)
+
+**Résumé**
+Extraction de deux vidéos MP4 propres pour le rapport — `assets/videos/random.mp4` (crash typique de `RandomAgent`) et `assets/videos/heuristic.mp4` (atterrissage propre de `HeuristicAgent`) — produites par `eval.py --record-video` et sélectionnées via une règle déterministe (premier épisode enregistré, `seed = cfg.seed = 0`). Premier contenu commité dans `assets/`. **Clôt la Phase 1.**
+
+**Contexte / motivation**
+Dernier ticket de la Phase 1 (§6.1 PROJECT.md). Les deux baselines (T1.1 random, T1.2 heuristic) et la validation du classifier (T1.3) sont closes ; il reste à figer le matériel visuel "ce que fait un agent non-appris" qui servira de point de comparaison dans le rapport et la soutenance face au DQN entraîné (T2.6 / showcase T4.3). Aucune logique à écrire : le pipeline d'enregistrement existe déjà (`evaluator._save_video` → `utils/video.save_video`, v0.13.0) ; T1.4 est une étape de **curation reproductible**.
+
+**Détails techniques**
+- **Fichiers ajoutés** :
+  - `assets/videos/random.mp4` — 15 979 B, 1,10 s, H.264 (avc1) yuv420p 600×400 @ 60 fps. Copie de `runs/random/0/videos/episode_0000.mp4`. Épisode 0 : `return = -48.07`, 65 steps, terminaison `crash` (cohérent avec le breakdown random 91 % crash / 9 % out_of_view).
+  - `assets/videos/heuristic.mp4` — 29 391 B, 2,55 s, H.264 (avc1) yuv420p 600×400 @ 60 fps. Copie de `runs/heuristic/0/videos/episode_0000.mp4`. Épisode 0 : `return = 297.35`, 152 steps, terminaison `land` (atterrissage textbook ; breakdown heuristic 84 % land).
+- **Fichiers modifiés** : `PLAN.md` — case T1.4 cochée.
+- **Règle de sélection (déterministe, reproductible)** : `video_every = 25` sur 100 épisodes d'éval → épisodes 0, 25, 50, 75 enregistrés. On retient **`episode_0000.mp4`** : c'est le premier épisode produit par `eval.py`, dont le reset env utilise `seed = cfg.seed + 0 = 0` (cf. `evaluator.evaluate`, `env.reset(seed=seed + ep_idx)`). Choix canonique, stable, trivialement rejouable — pas un "meilleur épisode" cherry-pické.
+- **Encodage** : inchangé par rapport à la sortie d'`eval.py` — `imageio.mimwrite(..., fps=60, macro_block_size=1)` (libx264 via `imageio-ffmpeg`). Pas de ré-encodage ni de trim : les fichiers sont déjà ~3 ordres de grandeur sous le plafond de 5 MB.
+- **Détail repo** : `assets/{plots,videos}/.gitkeep` sont ignorés par la règle `.*` de `.gitignore` (jamais commités) ; `assets/` n'avait donc aucun fichier tracké jusqu'ici — ces deux MP4 sont son premier contenu versionné. Vérifié : `git check-ignore` ne matche pas les `.mp4`.
+
+**Alternatives rejetées**
+- *Script d'automatisation sélection+copie (`scripts/make_baseline_videos.py`)* : anticiperait `reproduce.sh` (T3.5) ; le critère d'acceptation ancre explicitement la repro sur la commande `eval.py` existante, pas sur un nouvel outil. Une règle de sélection documentée suffit et reste plus simple (processus §2 : ne pas anticiper un ticket ultérieur).
+- *Choisir l'épisode au meilleur return (heuristic ep75 = 300.39)* : non déterministe vis-à-vis d'un changement de `video_every` ou de seed, et "cherry-pick" non défendable en soutenance. "Premier épisode enregistré" est une règle invariante.
+- *Ré-encoder / compresser (crf, downscale, trim ≤ 30 s)* : inutile (15,6 KB / 28,7 KB ≪ 5 MB ; 1,1 s / 2,55 s ≪ 30 s) et introduirait une dépendance ffmpeg CLI explicite hors du pipeline `imageio` du projet.
+- *Montage multi-épisodes en une vidéo* : le ticket demande "une vidéo propre de chaque baseline", pas un montage ; un épisode unique représentatif est plus lisible pour le rapport.
+
+**Impact**
+- Matériel visuel des baselines figé et versionné → réutilisable tel quel dans le rapport (T4.2) et la soutenance, base de comparaison avant/après apprentissage.
+- Confirme que la chaîne `eval.py --record-video` → `assets/` est reproductible bit-pour-bit (env seedé, encodage déterministe).
+
+**Non couvert volontairement**
+- Vidéo du DQN entraîné → **T2.6** (`assets/videos/dqn_trained.mp4`).
+- Vidéo showcase 20-30 s avec incrustation du return → **T4.3** (`assets/videos/showcase.mp4`).
+- Plots de training → **T2.5**.
+
+**Validation**
+- Repro : `python eval.py --run runs/random/0 --record-video` → `mean_return = -185.70`, breakdown `crash 0.91 / out_of_view 0.09` ; `python eval.py --run runs/heuristic/0 --record-video` → `mean_return = 252.83`, breakdown `land 0.84` (identiques à v1.3.0 — déterminisme confirmé). Génère `runs/<baseline>/0/videos/episode_0000.mp4`.
+- Critères T1.4 : `assets/videos/random.mp4` (15 979 B, 1,10 s) et `assets/videos/heuristic.mp4` (29 391 B, 2,55 s) — **≤ 5 MB** et **≤ 30 s** chacune ; décodage `ffmpeg -v error -f null -` sans erreur (visionnables, H.264 standard).
+- `python -m unittest discover tests/` → 157 tests, `OK` (aucun code modifié — inchangé vs v1.3.0).
+
 ### v1.3.0 — 2026-05-15 — Validation de `termination.classify` sur trajectoires réelles (T1.3)
 
 **Type** : fix (+ test, + tooling)

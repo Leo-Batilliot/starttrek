@@ -240,7 +240,7 @@ Chaque ticket a : **objectif** · **livrable** · **critère d'acceptation** (v�
   - **Livrable** : assert runtime dans l'evaluator ou script de validation dédié (`scripts/validate_termination.py`).
   - **Critère d'acceptation** : `UNKNOWN == 0` sur 100 épisodes random + 100 épisodes heuristic ; log écrit dans `events.log`.
 
-- [ ] **T1.4 — Assets vidéos des baselines**
+- [x] **T1.4 — Assets vidéos des baselines**
   - **Objectif** : extraire une vidéo MP4 propre (≤ 30 s) de chaque baseline pour le rapport.
   - **Livrable** : `assets/videos/random.mp4`, `assets/videos/heuristic.mp4`.
   - **Critère d'acceptation** : les deux vidéos sont visionnables, ≤ 5 MB chacune, et leur génération est reproductible via `python eval.py --run runs/<baseline>/<seed> --record-video`.
