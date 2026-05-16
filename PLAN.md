@@ -1,3 +1,5 @@
+
+
 # PLAN.md — Feuille de route technique du projet Start Trek (Lunar Lander RL)
 
 > Ce fichier est le **plan d'exécution détaillé** du projet. Il liste toutes les étapes prévues avec leurs attentes précises et le résultat final attendu à chaque jalon.
@@ -253,7 +255,7 @@ Chaque ticket a : **objectif** · **livrable** · **critère d'acceptation** (v�
 
 > But : implémenter le DQN de référence, entraîner un agent qui atteint l'objectif ≥ 200 sur 100 épisodes greedy, obtenir une première batch de plots de training.
 
-- [ ] **T2.1 — `agents/dqn.py` : squelette (forward Q + action selection)**
+- [x] **T2.1 — `agents/dqn.py` : squelette (forward Q + action selection)**
   - **Objectif** : classe `DQNAgent(AgentConfig)` qui construit `q_net` + `target_net` via `build_mlp`, implémente `act(obs, greedy)` avec ε-greedy (ε calculé par `training/schedules.py`), `observe()` pousse dans le buffer.
   - **Livrable** : `src/agents/dqn.py`, `src/training/schedules.py` (linear epsilon decay).
   - **Critère d'acceptation** : `python -c "from src.agents.registry import AGENTS; AGENTS['dqn'](...)"` instancie l'agent sans erreur ; `act(obs, greedy=True)` renvoie `argmax(Q(obs))` ; `act(obs, greedy=False)` mélange exploration et exploitation selon ε courant.

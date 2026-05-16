@@ -87,6 +87,55 @@ Exemples de jalons attendus :
 
 <!-- Ajouter les futures entrées ci-dessous, en ordre antéchronologique (le plus récent en premier). -->
 
+### v2.1.0 — 2026-05-16 — DQNAgent : squelette forward Q + ε-greedy (T2.1)
+
+**Type** : feature
+**Ticket** : T2.1
+**Phase** : 2 (DQN MVP)
+
+**Résumé**
+Ajout de `src/agents/dqn.py::DQNAgent` (enregistré `"dqn"`) — **squelette** : construit `q_net` + `target_net` via `build_mlp`, sélectionne l'action en ε-greedy (ε = `training/schedules.linear_epsilon` du nombre de transitions observées), `observe()` pousse dans le `ReplayBuffer` et fait décroître ε. `learn()` est un no-op documenté (la cible bootstrap + le pas de gradient sont T2.2). Ajout de `src/training/schedules.py::linear_epsilon` (fonction pure, décroissance linéaire). Couverture : `tests/test_dqn_agent.py` (18) + `tests/test_schedules.py` (11). **Ouvre la Phase 2.**
+
+**Contexte / motivation**
+Premier ticket de la Phase 2 (§6.2 PROJECT.md). On découpe le DQN en deux : T2.1 = chemin avant + collecte (testable sans boucle d'apprentissage), T2.2 = `learn()` (bootstrap + Adam + sync target). Ce squelette est déjà branchable dans le trainer agent-agnostic existant (qui appelle `act`/`observe`/`learn` à chaque step) sans rien y modifier — un run "dqn" tournerait dès maintenant en collectant des transitions avec une politique non entraînée.
+
+**Détails techniques**
+- **Fichiers créés** :
+  - `src/training/schedules.py` — `linear_epsilon(step, *, start, end, decay_steps) -> float`. Fonction **pure** (pas d'état, indépendante de l'agent/env → reproductible et testable isolément) : `step ≤ 0 → start` ; `step ≥ decay_steps → end` (clampé) ; sinon interpolation linéaire. `decay_steps ≤ 0 → ValueError`. Gère `start == end` (constant) et `start < end` (montant).
+  - `src/agents/dqn.py` — `DQNAgent`. `tests/test_dqn_agent.py` (18 tests), `tests/test_schedules.py` (11 tests).
+- **Fichiers modifiés** : `src/agents/__init__.py` (+`from . import dqn`, side-effect register) ; `PLAN.md` (case T2.1 cochée).
+- **Constructeur** `DQNAgent(cfg, *, n_actions, obs_dim=8)` :
+  - Le trainer et l'evaluator instancient `cls(cfg, n_actions=env.action_space.n)` (pas d'`obs_dim`). DQN ayant besoin de la dim d'entrée du MLP, `obs_dim` est un **kwarg optionnel** défaulté à `LUNARLANDER_OBS_DIM = 8` (constante module-level, §3.2 PROJECT.md / "Layout des données"), surchargeable pour les tests / autres envs discrets. Choix : pas de modification de la signature partagée trainer/eval (pas de breaking change), pas d'init paresseux (complexifie save/load).
+  - `q_net` et `target_net` via `build_mlp(obs_dim, n_actions, list(cfg.network.hidden_sizes), cfg.network.activation)`. `target_net` = copie exacte (`load_state_dict`), `.eval()`, params `requires_grad_(False)` (gelée — sync en T2.2).
+  - `ReplayBuffer(capacity=cfg.buffer_size, obs_shape=(obs_dim,))`.
+  - RNG d'exploration : `np.random.default_rng(np.random.randint(...))` — même pattern d'isolement que `RandomAgent` (reproductible sous `seed_all`, découplé du RNG global).
+  - `device = cpu` (cible MVP ≤ 2 h CPU, T2.4 ; déterminisme du seeding simplifié).
+  - `self.epsilon` exposé (colonne `epsilon` stable de `metrics.csv`, lue par le trainer via `getattr`).
+- **`act(obs, *, greedy=False) -> int`** : `_q_values` valide `obs.shape == (obs_dim,)` (fail loud, comme HeuristicAgent), `torch.no_grad()` forward, `argmax`. `greedy=True → argmax(Q)`. `greedy=False` : avec proba `ε(step)` action uniforme, sinon argmax — ε courant = `self.epsilon`.
+- **`observe(transition)`** : `buffer.push` + incrémente `_step_count` + recalcule `self.epsilon = linear_epsilon(_step_count, …)`. ε décroît donc sur le **nombre de transitions vues** (le trainer appelle `observe` une fois par step env).
+- **`save`/`load`** : `torch.save` d'un dict `{q_net, target_net, step_count, n_actions, obs_dim}` ; `load` valide `n_actions` **et** `obs_dim` (mismatch → `ValueError`, comme `RandomAgent`), restaure les state dicts + `_step_count` + ε. `weights_only=False` explicite (checkpoint local de confiance ; forward-compat torch ≥ 2.6).
+
+**Alternatives rejetées**
+- *Init paresseux des réseaux (inférer `obs_dim` au 1er `act`/`observe`)* : éviterait la constante 8 mais complique `save`/`load` (réseaux possiblement non construits) et l'invariant "instancié = prêt" du critère d'acceptation. Le kwarg défaulté est plus simple et explicite.
+- *Modifier la signature trainer/eval pour passer `obs_dim=env.observation_space.shape[0]`* : breaking change sur des fichiers partagés, hors périmètre T2.1 (processus §2 : ne pas anticiper).
+- *Implémenter `learn()` maintenant* : c'est explicitement T2.2 ; le no-op documenté garde le squelette minimal et le trainer fonctionnel (métriques vides gérées).
+- *RNG d'exploration = `np.random` global* : moins isolé ; le `Generator` dédié reproduit le pattern éprouvé de `RandomAgent`.
+- *`schedules` en classe à état* : une fonction pure est plus simple à tester (boundaries) et n'a pas besoin d'état (le compteur de pas vit dans l'agent).
+
+**Impact**
+- `AGENTS["dqn"]` instanciable et utilisable dans le trainer/eval existants sans modification ; collecte de transitions + politique greedy/ε-greedy opérationnelles.
+- `linear_epsilon` réutilisable tel quel par d'éventuels autres agents ε-greedy (Double DQN bonus, etc.).
+- Aucune perf/dette : pas d'optimiseur ni de boucle d'apprentissage tant que T2.2 n'est pas fait (volontaire).
+
+**Non couvert volontairement**
+- `learn()` : sample buffer + cible `y = r + γ·max Q_target·(1-done)` + Huber/MSE + Adam + grad clip + sync target → **T2.2**.
+- `configs/baseline/dqn.yaml` → **T2.3** (le critère T2.1 instancie via un `AgentConfig` direct, pas un YAML).
+- Run d'entraînement / jalon ≥ 200 → **T2.4**.
+
+**Validation**
+- Critère T2.1 : `AGENTS["dqn"](cfg, n_actions=4)` instancie sans erreur ; `act(obs, greedy=True) == argmax(Q(obs))` (vérifié contre `q_net` direct) ; `act(obs, greedy=False)` à ε=1.0 explore les 4 actions, à ε=0.05 (après `decay_steps` `observe`) → 193/200 greedy (mix selon ε). ✅
+- `python -m unittest discover tests/` → **186 tests, OK** (1 skipped sans rapport ; +29 vs v1.4.0).
+
 ### v1.4.0 — 2026-05-16 — Assets vidéos des baselines (T1.4)
 
 **Type** : infra (livrable assets — aucun code modifié)
