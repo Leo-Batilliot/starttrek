@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from src.agents.base import Agent, Transition
 from src.agents.registry import register_agent
@@ -48,6 +49,8 @@ class DQNAgent(Agent):
         for p in self.target_net.parameters():
             p.requires_grad_(False)
 
+        self.optimizer = torch.optim.Adam(self.q_net.parameters(), lr=cfg.lr)
+
         self.buffer = ReplayBuffer(
             capacity=cfg.buffer_size, obs_shape=(self.obs_dim,)
         )
@@ -55,6 +58,7 @@ class DQNAgent(Agent):
         self._rng = np.random.default_rng(int(np.random.randint(0, 2**31 - 1)))
 
         self._step_count = 0
+        self._learn_step = 0
         self.epsilon: float = self._epsilon_at(self._step_count)
 
     def _epsilon_at(self, step: int) -> float:
@@ -88,7 +92,46 @@ class DQNAgent(Agent):
         self.epsilon = self._epsilon_at(self._step_count)
 
     def learn(self) -> dict[str, float]:
-        return {}
+        cfg = self.cfg
+        if len(self.buffer) < max(cfg.batch_size, cfg.min_buffer_size):
+            return {}
+
+        tu = cfg.target_update
+        if tu.kind != "hard":
+            raise NotImplementedError(
+                "soft target update (Polyak) is deferred to T3.3; "
+                "use target_update.kind='hard'"
+            )
+
+        batch = self.buffer.sample(cfg.batch_size)
+        obs = batch["obs"].to(self.device)
+        action = batch["action"].to(self.device).long()
+        reward = batch["reward"].to(self.device)
+        next_obs = batch["next_obs"].to(self.device)
+        done = batch["done"].to(self.device)
+
+        q_sa = self.q_net(obs).gather(1, action.unsqueeze(1)).squeeze(1)
+        with torch.no_grad():
+            q_next = self.target_net(next_obs).max(dim=1).values
+            y = reward + cfg.gamma * q_next * (1.0 - done)
+
+        td_error = q_sa - y
+        loss = F.smooth_l1_loss(q_sa, y)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), cfg.grad_clip)
+        self.optimizer.step()
+
+        self._learn_step += 1
+        if tu.every_steps > 0 and self._learn_step % tu.every_steps == 0:
+            self.target_net.load_state_dict(self.q_net.state_dict())
+
+        return {
+            "loss": float(loss.item()),
+            "q_mean": float(q_sa.mean().item()),
+            "td_error_mean": float(td_error.mean().item()),
+        }
 
     def save(self, path: Path) -> None:
         p = Path(path)

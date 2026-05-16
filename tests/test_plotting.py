@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.utils.plotting import (
+    plot_episode_length,
     plot_epsilon,
     plot_loss,
     plot_returns,
@@ -82,6 +83,11 @@ class TestPlotting(unittest.TestCase):
     def test_plot_loss(self):
         out = self.dir / "loss.png"
         plot_loss(self.csv, out)
+        self._assert_png(out)
+
+    def test_plot_episode_length(self):
+        out = self.dir / "episode_length.png"
+        plot_episode_length(self.csv, out)
         self._assert_png(out)
 
     def test_plot_epsilon(self):

@@ -87,6 +87,201 @@ Exemples de jalons attendus :
 
 <!-- Ajouter les futures entrées ci-dessous, en ordre antéchronologique (le plus récent en premier). -->
 
+### v2.6.0 — 2026-05-16 — Vidéo du DQN entraîné (T2.6)
+
+**Type** : infra (livrable asset)
+**Ticket** : T2.6
+**Phase** : 2 (DQN MVP)
+
+**Résumé**
+`assets/videos/dqn_trained.mp4` — atterrissage propre du DQN entraîné, extrait via `eval.py` en chargeant explicitement **`best.pt`** (et non `final.pt`, effondré). 36,7 KB, 3,6 s, H.264, ≤ 5 MB.
+
+**Contexte / motivation**
+Dernier ticket de la Phase 2 : matériel visuel "agent entraîné" pour le rapport/soutenance, pendant des baselines random/heuristic (T1.4).
+
+**Détails techniques**
+- Commande : `python eval.py --run runs/dqn_baseline/0 --checkpoint runs/dqn_baseline/0/checkpoints/best.pt --episodes 5 --greedy --record-video` → 5 ép. greedy, **100 % land**, mean 251.28.
+- **Décision** : `--checkpoint best.pt` explicite. `eval.py` résout `final.pt` par défaut, or `final.pt` est la politique effondrée (cf. v2.4.0) ; la vidéo "DQN entraîné" doit montrer la politique retenue comme verdict (best-checkpoint).
+- Sélection déterministe : `episode_0000.mp4` (`video_every=20` config + 5 ép. → seul l'ép. 0 enregistré ; reset env seed=0). Les 5 ép. étant `land`, l'ép. 0 est un atterrissage propre. Copié sans ré-encodage vers `assets/videos/dqn_trained.mp4`.
+- **Fichiers** : `assets/videos/dqn_trained.mp4` (ajouté) ; `PLAN.md` case T2.6.
+
+**Alternatives rejetées**
+- *Vidéo depuis `final.pt`* : montrerait un crash (politique effondrée) — contraire au critère "atterrissage propre" et trompeur sur la perf réelle de l'agent.
+- *Montage multi-épisodes* : un épisode représentatif suffit (idem T1.4).
+
+**Impact**
+- Trio vidéo complet pour le rapport : random (crash) / heuristic (land) / DQN entraîné (land).
+
+**Non couvert volontairement**
+- Vidéo showcase 20-30 s avec incrustation du return → **T4.3**.
+
+**Validation**
+- `assets/videos/dqn_trained.mp4` : 37 616 B (**≤ 5 MB**), 3,6 s, décodage `ffmpeg -v error -f null -` sans erreur ; eval `termination_breakdown` = `land 1.0` sur les 5 ép. greedy. ✅
+
+### v2.5.0 — 2026-05-16 — Plots de training (T2.5)
+
+**Type** : feature (+ livrable assets)
+**Ticket** : T2.5
+**Phase** : 2 (DQN MVP)
+
+**Résumé**
+Génération des 5 plots de training dans `assets/plots/` depuis `runs/dqn_baseline/0/metrics.csv` : `returns_per_episode.png`, `loss.png`, `epsilon.png`, `episode_length.png`, `termination_breakdown.png`. Ajout de `plot_episode_length` (manquait dans `utils/plotting.py`) et de l'entrypoint `scripts/make_plots.py`.
+
+**Contexte / motivation**
+Le sujet (§5/§6.2 PROJECT.md) demande les courbes d'apprentissage. `plotting.py` (stub v0.13.0) n'avait que 4 fonctions ; T2.5 en exige 5 (dont `episode_length`).
+
+**Détails techniques**
+- **Fichiers créés** : `scripts/make_plots.py` (CLI `--run`/`--out-dir`, mappe les 5 noms de fichiers requis → fonctions de `plotting`, exit 0/84 ; style calqué sur `scripts/validate_termination.py`).
+- **Fichiers modifiés** : `src/utils/plotting.py` (+`plot_episode_length`, même canevas que `plot_returns` : trace brute + rolling-mean 100, sans ligne "solved") ; `tests/test_plotting.py` (+`test_plot_episode_length`, +import) ; `PLAN.md` case T2.5.
+- 5 PNG générés (86 / 61 / 30 / 98 / 29 KB) — tous lisibles, titrés, axes labellés, grille.
+
+**Alternatives rejetées**
+- *Mettre la génération dans `train.py`* : thin-CLI ; un script dédié est réutilisable par `reproduce.sh` (T3.5).
+- *matplotlib dans le trainer* : sépare calcul (run) et présentation (plots) — on peut re-plotter sans re-entraîner.
+
+**Impact**
+- Plots réutilisables tels quels dans le rapport (T4.2) ; `make_plots.py` branché dans `reproduce.sh` (T3.5).
+
+**Non couvert volontairement**
+- Plots agrégés multi-seeds + CI95 shading → **T3.6** ; paired-plots d'ablation → **T3.3/T3.4**.
+
+**Validation**
+- `python scripts/make_plots.py --run runs/dqn_baseline/0` → 5 PNG non vides dans `assets/plots/`. Outillage aussi vérifié sur `runs/random/0`. `test_plotting` couvre les 5.
+- `python -m unittest discover tests/` → **193 tests, OK**.
+
+### v2.4.0 — 2026-05-16 — Jalon MVP : DQN ≥ 200 + best-checkpoint (T2.4)
+
+**Type** : feature (jalon MVP)
+**Ticket** : T2.4
+**Phase** : 2 (DQN MVP)
+
+**Résumé**
+Jalon MVP atteint : `runs/dqn_baseline/0/summary.json` → **`solved: true`, `mean_return_last_100 = 246.45`** (100 ép. greedy, CI95 [235.3, 257.6], **89 % land**). Pour y arriver, `Trainer` gagne la **sélection du meilleur checkpoint** (éval greedy périodique + `best.pt` + verdict rechargé depuis le meilleur), car la politique finale du DQN vanilla s'effondre.
+
+**Contexte / motivation**
+Critère §7 PROJECT.md / T2.4 : ≥ 200 sur 100 ép. greedy. **Run #1** : l'agent apprend à atterrir (~step 250k) puis **s'effondre** → `final.pt` donne `mean = -318`, `solved=False`. Diagnostic (éval des checkpoints intermédiaires) : `step_250000.pt` = 246/89 % land/`solved=True` sur 100 ép. → ce n'est **pas un bug**, c'est l'instabilité tardive classique du DQN (catastrophic forgetting / Q-overestimation). Le run produisait une politique ≥ 200 mais le trainer ne gardait que la dernière. Décision (validée avec l'utilisateur) : implémenter le best-checkpoint et relancer.
+
+**Détails techniques**
+- **`src/training/trainer.py`** :
+  - `+from src.env.factory import build_env`. **Env d'éval dédié** construit dans `run()` (l'éval périodique ne perturbe pas l'épisode d'entraînement en cours, et ne pollue pas le seeding de la boucle).
+  - Hook `% eval_every` (était `pass`) → **éval greedy périodique** (`training.eval_episodes` épisodes) ; suivi de `best_eval_return`/`best_step` ; sauvegarde `best.pt` à chaque amélioration ; logs `[eval] step=… mean_return=… *new best*` (mirrorés `events.log` via `Logger`).
+  - Fin de run : `final.pt` sauvegardé, puis **rechargement du meilleur checkpoint** (`best.pt` sinon `final.pt`) avant l'éval autoritative 100 ép. `summary.json` gagne `best_step`, `best_eval_return`, `verdict_checkpoint`.
+  - `tests/test_smoke.py` étendu : `best.pt` créé, `verdict_checkpoint == "best.pt"`, clés `best_step`/`verdict_checkpoint`.
+- **Run #2** (trainer corrigé, `configs/baseline/dqn.yaml`, seed 0, 500k steps, ~23 min CPU) : `best_step=250000`, `best_eval_return=263.97` (éval périodique 20 ép.), `verdict_checkpoint=best.pt`, **`mean_return_last_100=246.45` / `solved=true`** sur 100 ép. `final.pt` re-effondré (éval step 500k = -604) mais **capturé** par le best-checkpoint — comportement attendu et raison d'être du correctif.
+- **Décisions notables** :
+  - Best-checkpoint = pratique standard d'early-stopping / model selection ; honnête (le run produit réellement cette politique en un seul entraînement reproductible, pas un cherry-pick post-hoc).
+  - `final.pt` conservé (traçabilité de l'effondrement, utile soutenance/§ limites du rapport).
+  - Verdict = éval **greedy** 100 ép. (`eval.episodes`), métrique §7 exacte ; `train_mean_return_last_100` (ε-greedy) gardé séparé pour traçabilité.
+
+**Alternatives rejetées**
+- *Garder `final.pt` comme verdict + tuning hyperparams (lr↓, target sync↑)* : plus long, n'élimine pas structurellement le risque de jeter une bonne politique ; le best-checkpoint est le bon design indépendamment.
+- *Backfill `summary.json` depuis un checkpoint existant sans re-run* : plus rapide mais summary non émis par le run lui-même → moins reproductible (reproduce.sh T3.5). Re-run avec trainer corrigé retenu.
+- *Maquiller / abaisser le seuil* : exclu (rapport fidèle des résultats).
+
+**Impact**
+- **Jalon MVP validé** ; débloque T2.5/T2.6 et toute la Phase 3 (multi-seeds, ablations) qui s'appuient sur `summary.json` + best-checkpoint.
+- L'instabilité tardive du DQN est documentée → matière pour la section "limites" du rapport (T4.2) et motivation des bonus (Double DQN, T5.x).
+
+**Non couvert volontairement**
+- Stabilisation des hyperparamètres / Double DQN → **bonus T5.x** (le MVP exige ≥ 200, atteint).
+- Multi-seeds 0..4 + agrégation CI95 → **T3.1/T3.2**.
+- Commit de `runs/dqn_baseline/0/` : `runs/` est gitignoré (cf. `.gitignore`) ; la politique de versionnement des summaries/metrics (sans les `.pt` lourds) est traitée en **Phase 3** (§ Fin de Phase 3 PLAN.md) — décision git laissée à l'utilisateur.
+
+**Validation**
+- `runs/dqn_baseline/0/summary.json` : `solved=true`, `mean_return_last_100=246.45`, `eval_episodes=100`, `verdict_checkpoint="best.pt"`, `best_step=250000`. ✅ **= jalon MVP §7.**
+- Reproductible : `python train.py --config configs/baseline/dqn.yaml --seed 0` régénère `runs/dqn_baseline/0/` avec `solved=true` (best-checkpoint capture le pic ~250k indépendamment de l'effondrement final).
+- `python -m unittest discover tests/` → **193 tests, OK** (1 skipped sans rapport).
+
+### v2.3.0 — 2026-05-16 — Config baseline DQN + infra `summary.json` (T2.3 + amorce T2.4)
+
+**Type** : feature (config + infra)
+**Ticket** : T2.3 (+ pré-requis T2.4)
+**Phase** : 2 (DQN MVP)
+
+**Résumé**
+T2.3 : `configs/baseline/dqn.yaml` validé comme config de référence DQN ([128,128], γ=0.99, lr=5e-4, batch 64, buffer 100k, min 1k, target hard/1000, ε 1.0→0.05 sur 100k steps, grad_clip 10, 500k total steps, eval_every 10k, eval 100 épisodes greedy). Le fichier existait déjà (commité en `[0.4]` comme fixture du config loader) ; il est conforme bit-pour-bit à la spec T2.3 — vérifié, non réécrit. **Infra T2.4** : `Trainer.run()` exécute désormais une évaluation greedy finale (`evaluator.evaluate`) et écrit `runs/<run>/<seed>/summary.json` (verdict autoritatif `solved` + `mean_return_last_100`).
+
+**Contexte / motivation**
+T2.3 fige la config sur laquelle tournera le jalon MVP (T2.4). Le critère d'acceptation T2.4 exige `summary.json` avec `"solved"` + `"mean_return_last_100" ≥ 200`, or le squelette `Trainer` (T0.11) laissait le hook d'éval périodique à `pass` et ne produisait aucun `summary.json`. Cette brique manquante n'appartient à aucun autre ticket → implémentée ici comme pré-requis de T2.4 (pas une anticipation : c'est le critère d'acceptation T2.4 qui l'impose).
+
+**Détails techniques**
+- **T2.3 — `configs/baseline/dqn.yaml`** : conforme à la spec. `eval.record_video: true`, `video_every: 20` (déjà présents — pratiques pour T2.6). `load_config` passe, **0 warning**, roundtrip `save_config`→`load_config` égal. Aucune modification du fichier.
+- **Infra T2.4 — `src/training/trainer.py`** :
+  - `+import json`, `+from src.training.evaluator import evaluate` (pas de cycle : `evaluator` ne dépend pas de `trainer`).
+  - Fin de `run()` : après le checkpoint `final.pt`, appel `evaluate(self.agent, self.env, episodes=cfg.eval.episodes, greedy=cfg.eval.greedy, seed=cfg.seed)` (record_video laissé False — l'env de training n'a pas de `render_mode` ; la vidéo est le job séparé de T2.6).
+  - Construit `summary` = méta training (`total_steps`, `episodes`, `train_mean_return_last_100`) **+** verdict éval greedy (`mean_return_last_100` = `eval.mean_return`, `solved`, `std_return`, `ci95_return`, `termination_breakdown`, `eval_episodes`, `eval_greedy`) + `wall_time_s`. Écrit dans `run_dir/summary.json` (indent 2) puis renvoyé.
+  - **Décision clé** : `mean_return_last_100` = moyenne sur les `eval.episodes` épisodes **greedy** finaux (métrique d'acceptation §7 PROJECT.md), pas la moyenne glissante d'entraînement (ε-greedy) — celle-ci est conservée sous `train_mean_return_last_100` pour traçabilité. Avec `eval.episodes=100` (dqn.yaml), `solved` ⟺ `n≥100 ∧ mean≥200` (logique inchangée de `evaluator`).
+- **Fichiers modifiés** : `configs/baseline/dqn.yaml` (aucun — vérifié) ; `src/training/trainer.py` (infra) ; `tests/test_smoke.py` (asserte `summary.json` créé, égal au dict renvoyé, clés `solved`/`mean_return_last_100`/`eval_episodes`/`termination_breakdown`, `solved` bool) ; `PLAN.md` (case T2.3).
+- **Impact général** : tous les runs (random, heuristic, smoke, dqn) produisent maintenant un `summary.json` — base uniforme pour le rapport (T4.2) et l'agrégation multi-seeds (T3.x).
+
+**Alternatives rejetées**
+- *Mettre l'éval finale + summary dans `train.py`* : violerait « `train.py`/`eval.py` restent des thin CLIs » (checklist conformité) ; la logique d'orchestration vit dans `Trainer`.
+- *`mean_return_last_100` = moyenne d'entraînement ε-greedy* : ce n'est pas la métrique d'acceptation §7 (qui exige du **greedy**) ; aurait pu faussement « valider » T2.4.
+- *Brancher aussi le hook d'éval périodique (`% eval_every`)* : hors périmètre T2.3/T2.4 (le jalon n'a besoin que du verdict final) ; éval périodique = optimisation future, laissée `pass`.
+
+**Non couvert volontairement**
+- Le **run d'entraînement réel** + verdict `mean_return ≥ 200` → **T2.4** (lancé en arrière-plan ; case T2.4 cochée et entrée `v2.4.0` ajoutée uniquement après vérification du `summary.json` réel — pas de résultat fabriqué).
+- Plots → **T2.5** ; vidéo DQN entraîné → **T2.6** (bloqués tant que `runs/dqn_baseline/0/` n'existe pas).
+
+**Validation**
+- T2.3 : `load_config("configs/baseline/dqn.yaml")` → `RunConfig`, 0 warning, roundtrip égal, tous champs conformes à la spec. ✅
+- Infra T2.4 : run DQN court (3000 steps, override) → `runs/.../summary.json` avec les 11 clés attendues, `solved=False` (bool), `mean_return_last_100=-126.63` (cohérent : agent non entraîné).
+- `python -m unittest discover tests/` → **192 tests, OK** (1 skipped ; `test_smoke` étendu couvre `summary.json`).
+
+### v2.2.0 — 2026-05-16 — DQNAgent : `learn()` bootstrap + target update (T2.2)
+
+**Type** : feature
+**Ticket** : T2.2
+**Phase** : 2 (DQN MVP)
+
+**Résumé**
+Implémentation du moteur d'apprentissage `DQNAgent.learn()` : sample du `ReplayBuffer`, cible Bellman `y = r + γ·max_a' Q_target(s',a')·(1-done)`, loss **Huber** (`smooth_l1_loss`), backward + Adam + gradient clipping, **hard target update** tous les `every_steps` pas de gradient. Renvoie `{"loss", "q_mean", "td_error_mean"}`. Ajout de l'optimiseur Adam et du compteur `_learn_step` au constructeur. +6 tests dans `tests/test_dqn_agent.py` (24 au total). Le DQN est désormais **entraînable de bout en bout** (jalon ≥ 200 = T2.4).
+
+**Contexte / motivation**
+Seconde moitié du DQN (T2.1 = chemin avant + collecte, T2.2 = la boucle d'apprentissage). C'est l'algorithme cœur du MVP §6.2 PROJECT.md : sans `learn()` l'agent collectait des transitions sans jamais s'améliorer. Le trainer agent-agnostic appelle déjà `agent.learn()` à chaque step et logge `metrics["loss"]` — `learn()` se branche sans toucher au trainer.
+
+**Détails techniques**
+- **Fichiers modifiés** :
+  - `src/agents/dqn.py` — `__init__` : `+self.optimizer = Adam(q_net.parameters(), lr=cfg.lr)`, `+self._learn_step = 0`. `learn()` réécrit (était no-op T2.1). `+import torch.nn.functional as F`.
+  - `tests/test_dqn_agent.py` — `_cfg` paramétré (`lr/batch/min_buffer/every/kind/tau`), helper `_fill_buffer`, +6 tests ; `test_learn_is_safe_and_empty` remplacé par `test_learn_noop_until_enough_samples`.
+  - `PLAN.md` — case T2.2 cochée.
+- **`learn()` — déroulé** :
+  1. **Garde de warm-up** : `len(buffer) < max(batch_size, min_buffer_size)` → retourne `{}` (le trainer gère les métriques vides ; pas d'apprentissage tant que le buffer n'est pas assez rempli).
+  2. **Garde `kind`** : `target_update.kind != "hard"` → `NotImplementedError` pointant T3.3 (le soft/Polyak est l'ablation A, hors périmètre T2.2 — *fail loud* avant toute mutation d'état plutôt que comportement silencieux faux).
+  3. `batch = buffer.sample(batch_size)` (clés `obs, action, reward, next_obs, done` ; `done` = `float(terminated)` **seul**, pas `truncated` — une troncation doit continuer à bootstrapper).
+  4. `q_sa = q_net(obs).gather(1, action).squeeze(1)` (Q de l'action jouée).
+  5. `with no_grad(): q_next = target_net(next_obs).max(1).values ; y = reward + γ·q_next·(1-done)`. La cible passe par `target_net` gelé (anti « course après sa propre queue »).
+  6. `loss = smooth_l1_loss(q_sa, y)` (**Huber**, plus robuste aux TD-errors aberrantes que MSE — choix DQN classique).
+  7. `optimizer.zero_grad(); loss.backward(); clip_grad_norm_(q_net.parameters(), grad_clip); optimizer.step()`.
+  8. `_learn_step += 1` ; si `every_steps > 0 and _learn_step % every_steps == 0` → `target_net.load_state_dict(q_net.state_dict())` (hard copy).
+  9. Retourne `{"loss", "q_mean", "td_error_mean"}` (tous `float`).
+- **Décisions notables** :
+  - **Huber vs MSE** : ticket autorise les deux ; Huber retenu (gradient borné sur grosses erreurs → entraînement plus stable, recommandation DQN de référence).
+  - **`_learn_step` distinct de `_step_count`** : sync target indexée sur le nb de **pas de gradient** (sémantique standard), `_step_count` reste l'horloge ε (transitions vues). Découplé proprement.
+  - **`done` = `terminated` uniquement** : déjà garanti par `ReplayBuffer.push` (`float(transition.terminated)`) — cohérent avec le contrat de terminaison v1.3.0.
+  - **soft target = `NotImplementedError`** : `TargetUpdateConfig` valide `kind ∈ {hard, soft}` ; plutôt que d'implémenter le soft (anticipation T3.3) ou de l'ignorer en silence, on échoue explicitement. `configs/baseline/dqn.yaml` (T2.3) utilisera `hard`.
+
+**Alternatives rejetées**
+- *Implémenter le soft/Polyak maintenant* : c'est l'ablation A de T3.3 (processus §2 : ne pas anticiper). Fail-loud documenté à la place.
+- *Persister `optimizer`/`_learn_step` dans `save`/`load`* : il n'y a pas de reprise d'entraînement dans le MVP (le trainer entraîne d'un bloc, l'eval ne charge que `q_net` pour jouer greedy). Hors périmètre — voir « Non couvert ».
+- *MSE* : converge mais plus sensible aux outliers de TD-error en début d'apprentissage.
+- *Sync target sur `_step_count` (steps env)* : équivalent tant qu'il y a 1 learn/step, mais ambigu pendant le warm-up (learn no-op) ; le compteur de pas de gradient est sans ambiguïté.
+
+**Impact**
+- DQN entraînable de bout en bout via le trainer existant → débloque T2.3 (config baseline) et T2.4 (run + jalon ≥ 200).
+- `metrics["loss"]` désormais peuplé → colonnes `loss_mean/loss_std` de `metrics.csv` significatives, plots de loss (T2.5) exploitables.
+
+**Non couvert volontairement**
+- Soft / Polyak target update → **T3.3** (ablation A).
+- `configs/baseline/dqn.yaml` → **T2.3**.
+- Run d'entraînement réel + jalon `mean_return ≥ 200` → **T2.4**.
+- Sérialisation de l'état optimiseur / `_learn_step` (reprise d'entraînement) → non requis par le MVP (pas de feature resume).
+
+**Validation**
+- Critère T2.2 : `learn()` renvoie `{"loss": float, "q_mean": float, "td_error_mean": float}` ; 1000 pas d'apprentissage sur buffer pré-rempli (2000 transitions, target gelé) → loss moyenne **0.73 → 0.39 (-47 %)**, décroissance mesurable. ✅
+- `tests/test_dqn_agent.py` : warm-up no-op, respect `min_buffer_size`, clés de métriques, online net bouge / target figé, hard sync exactement tous les N pas, **loss décroît** sur buffer fixe (1000 steps, -50 %+), soft → `NotImplementedError`.
+- `python -m unittest discover tests/` → **192 tests, OK** (1 skipped sans rapport ; +6 vs v2.1.0).
+
 ### v2.1.0 — 2026-05-16 — DQNAgent : squelette forward Q + ε-greedy (T2.1)
 
 **Type** : feature

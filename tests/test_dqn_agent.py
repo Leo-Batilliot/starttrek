@@ -28,19 +28,39 @@ def _cfg(
     eps_decay: int = 100,
     hidden: tuple[int, ...] = (16,),
     buffer: int = 64,
+    lr: float = 5e-4,
+    batch: int = 8,
+    min_buffer: int = 0,
+    every: int = 1000,
+    kind: str = "hard",
+    tau: float = 0.0,
 ) -> AgentConfig:
     return AgentConfig(
         name="dqn",
         network=NetworkConfig(hidden_sizes=hidden, activation="relu"),
         gamma=0.99,
-        lr=5e-4,
-        batch_size=8,
+        lr=lr,
+        batch_size=batch,
         buffer_size=buffer,
-        min_buffer_size=0,
-        target_update=TargetUpdateConfig(kind="hard", every_steps=1000, tau=0.0),
+        min_buffer_size=min_buffer,
+        target_update=TargetUpdateConfig(kind=kind, every_steps=every, tau=tau),
         epsilon=EpsilonConfig(start=eps_start, end=eps_end, decay_steps=eps_decay),
         grad_clip=10.0,
     )
+
+
+def _fill_buffer(agent, n: int, rng: np.random.Generator) -> None:
+    for _ in range(n):
+        agent.buffer.push(
+            Transition(
+                obs=rng.standard_normal(8).astype(np.float32),
+                action=int(rng.integers(0, 4)),
+                reward=float(rng.standard_normal()),
+                next_obs=rng.standard_normal(8).astype(np.float32),
+                terminated=bool(rng.integers(0, 2)),
+                truncated=False,
+            )
+        )
 
 
 def _obs(rng: np.random.Generator) -> np.ndarray:
@@ -159,11 +179,80 @@ class TestDQNAgentSkeleton(unittest.TestCase):
         agent = DQNAgent(_cfg(eps_start=0.9), n_actions=4)
         self.assertEqual(agent.epsilon, 0.9)
 
-    def test_learn_is_safe_and_empty(self):
+    def test_learn_noop_until_enough_samples(self):
         seed_all(seed=0)
-        agent = DQNAgent(_cfg(), n_actions=4)
-        agent.observe(_transition())
+        agent = DQNAgent(_cfg(batch=8, min_buffer=0), n_actions=4)
         self.assertEqual(agent.learn(), {})
+        for _ in range(7):
+            agent.observe(_transition())
+        self.assertEqual(agent.learn(), {})  # 7 < batch_size 8
+
+    def test_learn_respects_min_buffer_size(self):
+        seed_all(seed=0)
+        agent = DQNAgent(_cfg(batch=4, min_buffer=20), n_actions=4)
+        for _ in range(10):
+            agent.observe(_transition())
+        self.assertEqual(agent.learn(), {})  # 10 < min_buffer_size 20
+
+    def test_learn_returns_metric_keys(self):
+        seed_all(seed=0)
+        agent = DQNAgent(_cfg(buffer=64, batch=16), n_actions=4)
+        _fill_buffer(agent, 64, np.random.default_rng(0))
+        metrics = agent.learn()
+        self.assertEqual(set(metrics), {"loss", "q_mean", "td_error_mean"})
+        for v in metrics.values():
+            self.assertIsInstance(v, float)
+
+    def test_learn_updates_online_net_not_target(self):
+        seed_all(seed=0)
+        agent = DQNAgent(_cfg(buffer=32, batch=16, every=10_000), n_actions=4)
+        _fill_buffer(agent, 32, np.random.default_rng(1))
+        q_before = [p.clone() for p in agent.q_net.parameters()]
+        t_before = [p.clone() for p in agent.target_net.parameters()]
+        agent.learn()
+        q_changed = any(
+            not torch.equal(a, b) for a, b in zip(q_before, agent.q_net.parameters())
+        )
+        t_changed = any(
+            not torch.equal(a, b) for a, b in zip(t_before, agent.target_net.parameters())
+        )
+        self.assertTrue(q_changed)
+        self.assertFalse(t_changed)
+
+    def test_hard_target_sync_every_n_steps(self):
+        seed_all(seed=0)
+        agent = DQNAgent(_cfg(buffer=16, batch=8, every=5), n_actions=4)
+        _fill_buffer(agent, 16, np.random.default_rng(2))
+        for _ in range(4):
+            agent.learn()
+        synced = all(
+            torch.equal(a, b)
+            for a, b in zip(agent.q_net.parameters(), agent.target_net.parameters())
+        )
+        self.assertFalse(synced)  # q_net moved, target not yet resynced
+        agent.learn()  # 5th learn step → hard copy
+        synced = all(
+            torch.equal(a, b)
+            for a, b in zip(agent.q_net.parameters(), agent.target_net.parameters())
+        )
+        self.assertTrue(synced)
+
+    def test_learn_decreases_loss_on_fixed_buffer(self):
+        seed_all(seed=0)
+        # buffer == batch and target frozen (every huge) → pure regression on a
+        # fixed dataset/target: loss must drop measurably over 1000 steps (T2.2).
+        agent = DQNAgent(_cfg(buffer=16, batch=16, lr=1e-3, every=10**9), n_actions=4)
+        _fill_buffer(agent, 16, np.random.default_rng(3))
+        losses = [agent.learn()["loss"] for _ in range(1000)]
+        self.assertLess(np.mean(losses[-50:]), 0.5 * np.mean(losses[:50]))
+        self.assertLess(losses[-1], losses[0])
+
+    def test_soft_target_update_not_implemented(self):
+        seed_all(seed=0)
+        agent = DQNAgent(_cfg(buffer=16, batch=8, kind="soft", tau=0.01), n_actions=4)
+        _fill_buffer(agent, 16, np.random.default_rng(4))
+        with self.assertRaises(NotImplementedError):
+            agent.learn()
 
     def test_save_load_roundtrip(self):
         seed_all(seed=0)

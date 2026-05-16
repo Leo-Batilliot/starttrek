@@ -260,27 +260,27 @@ Chaque ticket a : **objectif** · **livrable** · **critère d'acceptation** (v�
   - **Livrable** : `src/agents/dqn.py`, `src/training/schedules.py` (linear epsilon decay).
   - **Critère d'acceptation** : `python -c "from src.agents.registry import AGENTS; AGENTS['dqn'](...)"` instancie l'agent sans erreur ; `act(obs, greedy=True)` renvoie `argmax(Q(obs))` ; `act(obs, greedy=False)` mélange exploration et exploitation selon ε courant.
 
-- [ ] **T2.2 — `agents/dqn.py` : `learn()` (bootstrap + target update)**
+- [x] **T2.2 — `agents/dqn.py` : `learn()` (bootstrap + target update)**
   - **Objectif** : sample du buffer, calcul de `y = r + γ * max_a' Q_target(s', a') * (1 - done)`, loss MSE ou Huber, backward + Adam step, gradient clipping, target update (hard copy tous les N steps).
   - **Livrable** : `agents/dqn.py` mis à jour.
   - **Critère d'acceptation** : `learn()` renvoie `{"loss": float, "q_mean": float, "td_error_mean": float}` ; 1000 steps d'apprentissage sur le buffer pré-rempli donnent une loss qui décroît mesurablement.
 
-- [ ] **T2.3 — `configs/baseline/dqn.yaml` (référence)**
+- [x] **T2.3 — `configs/baseline/dqn.yaml` (référence)**
   - **Objectif** : config complète (hidden_sizes [128,128], γ=0.99, lr=5e-4, batch=64, buffer=100000, min_buffer=1000, target hard every 1000 steps, ε 1.0 → 0.05 sur 100k steps, grad_clip=10.0, 500k total steps, eval every 10k).
   - **Livrable** : `configs/baseline/dqn.yaml`.
   - **Critère d'acceptation** : `load_config("configs/baseline/dqn.yaml")` passe ; aucun warning sur champs inconnus ou manquants.
 
-- [ ] **T2.4 — Training run single-seed + premier jalon ≥ 200**
+- [x] **T2.4 — Training run single-seed + premier jalon ≥ 200**
   - **Objectif** : `python train.py --config configs/baseline/dqn.yaml --seed 0` tourne jusqu'à la fin, l'évaluation finale 100 épisodes greedy donne `mean_return ≥ 200`. Durée target : **≤ 2 h sur CPU** (laptop moderne, si > 2 h prévoir GPU / réduction du total_steps).
   - **Livrable** : `runs/dqn_baseline/0/` complet (config + metrics + checkpoints + events + summary.json).
   - **Critère d'acceptation** : `runs/dqn_baseline/0/summary.json` contient `"solved": true` et `"mean_return_last_100" ≥ 200`. Ceci est le jalon MVP.
 
-- [ ] **T2.5 — Plots de training (returns, loss, epsilon)**
+- [x] **T2.5 — Plots de training (returns, loss, epsilon)**
   - **Objectif** : utiliser `utils/plotting.py` pour générer `assets/plots/returns_per_episode.png`, `loss.png`, `epsilon.png`, `episode_length.png`, `termination_breakdown.png` depuis `runs/dqn_baseline/0/metrics.csv`.
   - **Livrable** : 5 PNG dans `assets/plots/`.
   - **Critère d'acceptation** : les 5 plots existent, sont lisibles, avec titres + axes labellés + grille.
 
-- [ ] **T2.6 — Vidéo du DQN entraîné**
+- [x] **T2.6 — Vidéo du DQN entraîné**
   - **Objectif** : `python eval.py --run runs/dqn_baseline/0 --episodes 5 --greedy --record-video`.
   - **Livrable** : `assets/videos/dqn_trained.mp4`.
   - **Critère d'acceptation** : vidéo visionnable, ≤ 5 MB, montre au moins un atterrissage propre (legs contact + lander arrêté sur plateforme).

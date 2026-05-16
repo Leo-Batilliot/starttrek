@@ -88,6 +88,25 @@ def plot_returns(csv_path: Path | str, out_path: Path | str, *, window: int = 10
     return _save_fig(fig, out_path)
 
 
+def plot_episode_length(csv_path: Path | str, out_path: Path | str, *, window: int = 100) -> Path:
+    data = _read_columns(csv_path, ["episode", "length"])
+    episodes = _floats(data["episode"])
+    lengths = _floats(data["length"])
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.plot(episodes, lengths, color="teal", alpha=0.4, linewidth=0.8, label="length")
+    if lengths.size >= 2 and window > 1:
+        smoothed = _rolling_mean(lengths, window)
+        x_smoothed = episodes[window - 1 :] if lengths.size >= window else episodes[-smoothed.size :]
+        ax.plot(x_smoothed, smoothed, color="darkorange", linewidth=1.8, label=f"rolling mean ({window})")
+    ax.set_xlabel("episode")
+    ax.set_ylabel("episode length (steps)")
+    ax.set_title("Episode length")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="upper right")
+    return _save_fig(fig, out_path)
+
+
 def plot_loss(csv_path: Path | str, out_path: Path | str) -> Path:
     data = _read_columns(csv_path, ["episode", "loss_mean"])
     episodes = _floats(data["episode"])

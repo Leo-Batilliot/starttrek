@@ -1,4 +1,5 @@
 import csv
+import json
 import sys
 import tempfile
 import unittest
@@ -51,9 +52,22 @@ class TestSmokeEndToEnd(unittest.TestCase):
             self.assertEqual(summary["total_steps"], 400)
             self.assertGreater(summary["episodes"], 0, "at least one episode must finish in 400 steps")
 
-            for child in ("config.yaml", "metrics.csv", "events.log"):
+            for child in ("config.yaml", "metrics.csv", "events.log", "summary.json"):
                 self.assertTrue((run_dir / child).exists(), f"missing {child}")
             self.assertTrue((run_dir / "checkpoints" / "final.pt").exists())
+            self.assertTrue((run_dir / "checkpoints" / "best.pt").exists())
+
+            with (run_dir / "summary.json").open(encoding="utf-8") as f:
+                disk_summary = json.load(f)
+            self.assertEqual(disk_summary, summary)
+            for key in (
+                "solved", "mean_return_last_100", "eval_episodes",
+                "termination_breakdown", "best_step", "verdict_checkpoint",
+            ):
+                self.assertIn(key, summary)
+            self.assertIsInstance(summary["solved"], bool)
+            self.assertEqual(summary["eval_episodes"], cfg.eval.episodes)
+            self.assertEqual(summary["verdict_checkpoint"], "best.pt")
 
             with (run_dir / "metrics.csv").open(newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
