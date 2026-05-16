@@ -235,7 +235,7 @@ Chaque ticket a : **objectif** · **livrable** · **critère d'acceptation** (v�
   - **Livrable** : `src/agents/heuristic_agent.py` + entrée dans `AGENTS` + `configs/baseline/heuristic.yaml`.
   - **Critère d'acceptation** : `mean_return ≥ 0` sur 100 épisodes greedy (une heuristique raisonnable bat nettement random sans atteindre forcément 200) ; termination_breakdown montre une proportion `LAND` visible.
 
-- [ ] **T1.3 — Validation de `termination.classify` sur trajectoires réelles**
+- [x] **T1.3 — Validation de `termination.classify` sur trajectoires réelles**
   - **Objectif** : confirmer que sur un run de `RandomAgent` et `HeuristicAgent`, la proportion de `UNKNOWN` est **0 %** et que la breakdown est plausible (random → majorité `CRASH`/`OUT_OF_VIEW`, heuristic → fraction non nulle de `LAND`).
   - **Livrable** : assert runtime dans l'evaluator ou script de validation dédié (`scripts/validate_termination.py`).
   - **Critère d'acceptation** : `UNKNOWN == 0` sur 100 épisodes random + 100 épisodes heuristic ; log écrit dans `events.log`.

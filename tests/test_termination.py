@@ -75,9 +75,11 @@ class TestClassify(unittest.TestCase):
             TerminationReason.LAND,
         )
 
-    def test_land_requires_both_legs(self):
+    def test_land_with_single_leg_contact(self):
+        # LunarLander-v3 gives the +100 sentinel only when the body falls
+        # asleep (came to rest); any leg in contact then means it landed.
         state = make_state(left_leg=1.0, right_leg=0.0)
-        self.assertNotEqual(
+        self.assertEqual(
             classify({}, reward=100.0, state=state, terminated=True, truncated=False),
             TerminationReason.LAND,
         )
@@ -110,14 +112,18 @@ class TestClassify(unittest.TestCase):
             TerminationReason.OUT_OF_VIEW,
         )
 
-    def test_sleep_at_rest_without_leg_contact(self):
-        state = make_state(x=0.2, vx=0.0, vy=0.0, theta_dot=0.0)
+    def test_sleep_when_asleep_without_leg_contact(self):
+        # +100 sentinel (Box2D asleep) but no leg in contact: the lander
+        # came to rest without a proper landing -> idle / sleep.
+        state = make_state(x=0.2)
         self.assertEqual(
-            classify({}, reward=0.0, state=state, terminated=True, truncated=False),
+            classify({}, reward=100.0, state=state, terminated=True, truncated=False),
             TerminationReason.SLEEP,
         )
 
-    def test_sleep_not_triggered_when_velocity_high(self):
+    def test_mid_range_terminal_reward_is_unknown_guard(self):
+        # A terminated step with neither sentinel never happens in stock
+        # LunarLander-v3; the defensive guard returns UNKNOWN.
         state = make_state(x=0.2, vx=0.5)
         self.assertEqual(
             classify({}, reward=0.0, state=state, terminated=True, truncated=False),

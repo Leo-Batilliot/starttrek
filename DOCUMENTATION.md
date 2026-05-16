@@ -87,6 +87,47 @@ Exemples de jalons attendus :
 
 <!-- Ajouter les futures entrées ci-dessous, en ordre antéchronologique (le plus récent en premier). -->
 
+### v1.3.0 — 2026-05-15 — Validation de `termination.classify` sur trajectoires réelles (T1.3)
+
+**Type** : fix (+ test, + tooling)
+**Ticket** : T1.3
+**Phase** : 1 (Baselines)
+
+**Résumé**
+Correction de `src/utils/termination.py::classify` pour s'appuyer sur le **contrat de reward terminal** réel de LunarLander-v3 (±100 fixés par l'env), ce qui élimine les `UNKNOWN` sur trajectoires réelles. Ajout du script de validation dédié `scripts/validate_termination.py` qui rejoue les deux baselines (RandomAgent + HeuristicAgent) sur 100 épisodes greedy chacune et **asserte le critère T1.3** (`UNKNOWN == 0` + breakdown plausible), avec log écrit dans `events.log`. Run de référence : random → **0 % unknown** (90 % crash / 10 % out_of_view), heuristic → **0 % unknown** (84 % land / 11 % sleep / 2 % crash / 2 % out_of_view / 1 % truncated), `mean_return` heuristic = 252.83 (identique à v1.2.0, reproductible). Le **26 % `unknown`** laissé ouvert par T1.2 est résorbé.
+
+**Contexte / motivation**
+T1.2 avait délibérément exposé un bug : 26 % des fins d'épisodes de l'heuristique tombaient en `UNKNOWN`. Cause racine : l'ancien `classify` exigeait **les deux jambes** en contact pour `LAND` et détectait `SLEEP` par seuils de vitesse — deux heuristiques fragiles. Or LunarLander-v3 (`gymnasium/envs/box2d/lunar_lander.py`, `step()`, lignes 656-662) **écrase** le reward du pas terminal à une sentinelle fixe : `-100` (crash corps-sol *ou* `|x| >= 1.0` hors champ) ou `+100` (corps Box2D endormi = au repos). La truncation (wrapper `TimeLimit`) garde le reward shapé et met `truncated=True`. Classer à partir du **signe de cette sentinelle** rend `UNKNOWN` structurellement impossible sur trajectoires réelles, ce qui est exactement le critère d'acceptation T1.3.
+
+**Détails techniques**
+- **Fichiers créés** :
+  - `scripts/validate_termination.py` — entrypoint de validation (réutilise `load_config` / `build_env` / `AGENTS` / `evaluate` / `Logger`, aucune logique dupliquée). Sortie : `runs/validate_termination/{events.log,metrics.csv}` + stdout, exit code `0`/`84`.
+- **Fichiers modifiés** :
+  - `src/utils/termination.py` — `classify` réécrit autour du contrat de reward terminal. Nouvelle logique : `truncated → TRUNCATED` ; `not terminated → UNKNOWN` ; `reward ≥ +80 → LAND` si une jambe en contact sinon `SLEEP` ; `reward ≤ -80 → OUT_OF_VIEW` si `|x| ≥ 1.0` sinon `CRASH` ; garde défensive `UNKNOWN` pour input non-stock. Constantes mortes supprimées (seuils de vitesse `SLEEP`), `_TERMINAL_REWARD_MAGNITUDE` introduit. **Signature inchangée** → `trainer.py` et `evaluator.py` non impactés.
+  - `tests/test_termination.py` — 2 tests qui encodaient l'ancienne sémantique physiquement fausse réécrits : `test_land_requires_both_legs` → `test_land_with_single_leg_contact` (une jambe + sentinelle +100 = `LAND`) ; `test_sleep_at_rest_without_leg_contact` → `test_sleep_when_asleep_without_leg_contact` (sentinelle +100 sans jambe = `SLEEP`) ; `test_sleep_not_triggered_when_velocity_high` → `test_mid_range_terminal_reward_is_unknown_guard`. Les 14 autres tests passent inchangés.
+  - `PLAN.md` — case T1.3 cochée.
+- **Décision notable** : la sentinelle de reward est la source de vérité (déterministe, documentée dans le code source de l'env) ; les booléens `leg1/leg2` ne servent plus qu'à départager `LAND` vs `SLEEP` à reward +100, et `|x|` à départager `CRASH` vs `OUT_OF_VIEW` à reward -100.
+
+**Alternatives rejetées**
+- *Garder l'ancienne heuristique et baisser les seuils* : ne corrige pas la cause (un atterrissage où une seule jambe est flaggée à l'obs finale reste mal classé) ; reporte le bug.
+- *Mapper `UNKNOWN` arbitrairement vers `LAND`/`SLEEP`* : ferait passer le critère sans le comprendre ; non défendable en soutenance.
+- *Assertion runtime dans `evaluator.py`* (proposée comme option dans le ticket) : coupling de la boucle d'éval à une contrainte de validation + édition de code partagé ; le script dédié est plus propre et exécutable à la demande / dans `reproduce.sh`.
+- *Test unitaire sur trajectoires réelles* : lancer 200 épisodes Box2D dans `unittest` serait lent et fragile vis-à-vis de l'OS ; le contrat est verrouillé par les tests synthétiques rapides, la validation réelle par le script.
+
+**Impact**
+- `UNKNOWN` structurellement impossible sur LunarLander-v3 réel → `termination_breakdown` de tous les runs (random, heuristic, futur DQN) est fiable pour les plots et le `summary.json` (§8 PROJECT.md).
+- `scripts/validate_termination.py` réutilisable tel quel dans `reproduce.sh` (T3.5).
+- Distinction `LAND`/`SLEEP` : un repos sans contact jambe est compté `SLEEP` (11 % chez l'heuristique) — fidèle à §3.5 PROJECT.md.
+
+**Non couvert volontairement**
+- Extraction des vidéos baselines propres → **T1.4** (`assets/videos/random.mp4`, `heuristic.mp4`).
+- Validation sur trajectoires DQN entraînées → implicite en Phase 2 (le contrat ne dépend pas de la politique).
+
+**Validation**
+- `python scripts/validate_termination.py --episodes 100` → `OVERALL: PASS`, `events.log` contient `unknown_count=0` + `verdict=PASS` pour random, heuristic et `ALL`.
+- Valeurs attendues : random `unknown=0.0` (crash+out_of_view = 1.00) ; heuristic `unknown=0.0`, `land=0.84`, `mean_return=252.83`.
+- `python -m unittest discover tests/` → 157 tests, `OK` (1 skipped, sans rapport).
+
 ### v1.2.0 — 2026-05-12 — HeuristicAgent (T1.2)
 
 **Type** : feature
@@ -819,14 +860,12 @@ Cette section consolide les **décisions architecturales** (WHY plus que WHAT). 
 ### Classification des terminaisons (v0.0.1)
 
 - **Exigence sujet** (§3.5 + §7.2 de `PROJECT.md`) : distinguer **crash / land / out_of_view / sleep / truncated**.
-- **Implémentation** : `utils/termination.py::classify(info, reward, state, terminated, truncated) → TerminationReason` (enum). Heuristiques :
-  - `truncated=True` → `TRUNCATED`.
-  - `terminated=True` + `reward ≈ +100` + legs contacts → `LAND`.
-  - `terminated=True` + `reward ≈ -100` + corps en contact → `CRASH`.
-  - `terminated=True` + `|x| > frame_limit` → `OUT_OF_VIEW`.
-  - `terminated=True` + vélocité ~0 + pas de legs contact → `SLEEP` (Box2D asleep).
-  - Sinon → `UNKNOWN` (doit être 0 sur trajectoires réelles — assertion au test T1.3).
-- **Tests** : `tests/test_termination.py` couvre chaque cas avec des `info`/`reward`/`state` synthétiques.
+- **Implémentation** (corrigée en v1.3.0 — T1.3) : `utils/termination.py::classify(info, reward, state, terminated, truncated) → TerminationReason` (enum), basée sur le **contrat de reward terminal** de LunarLander-v3 (l'env écrase le reward du pas terminal à ±100) :
+  - `truncated=True` → `TRUNCATED` ; `not terminated` → `UNKNOWN`.
+  - `terminated=True` + `reward ≥ +80` (sentinelle +100, corps endormi) → `LAND` si une jambe en contact, sinon `SLEEP`.
+  - `terminated=True` + `reward ≤ -80` (sentinelle -100) → `OUT_OF_VIEW` si `|x| ≥ 1.0`, sinon `CRASH`.
+  - Garde défensive `UNKNOWN` pour input non-stock uniquement — **0 sur trajectoires réelles**, asserté par `scripts/validate_termination.py` (100 random + 100 heuristic).
+- **Tests** : `tests/test_termination.py` couvre chaque cas avec des `info`/`reward`/`state` synthétiques ; la validation sur trajectoires réelles est faite par `scripts/validate_termination.py` (T1.3).
 
 ### Layout des données (v0.0.1)
 
