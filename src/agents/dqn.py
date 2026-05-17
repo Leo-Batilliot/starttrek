@@ -112,7 +112,7 @@ class DQNAgent(Agent):
 
         q_sa = self.q_net(obs).gather(1, action.unsqueeze(1)).squeeze(1)
         with torch.no_grad():
-            q_next = self.target_net(next_obs).max(dim=1).values
+            q_next = self._next_state_values(next_obs)
             y = reward + cfg.gamma * q_next * (1.0 - done)
 
         td_error = q_sa - y
@@ -132,6 +132,16 @@ class DQNAgent(Agent):
             "q_mean": float(q_sa.mean().item()),
             "td_error_mean": float(td_error.mean().item()),
         }
+
+    def _next_state_values(self, next_obs: torch.Tensor) -> torch.Tensor:
+        """Bootstrap value of s' — vanilla DQN: max_a' Q_target(s', a').
+
+        Overridable hook so Double DQN changes ONLY the target rule
+        (decoupling action selection from evaluation) without touching
+        the rest of `learn()` (cf. §12.4 PROJECT.md). Called inside the
+        ``torch.no_grad()`` block of ``learn()``.
+        """
+        return self.target_net(next_obs).max(dim=1).values
 
     def save(self, path: Path) -> None:
         p = Path(path)

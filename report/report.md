@@ -18,8 +18,10 @@ modifié, vérifié par diff de configuration) sont menées : (A) la **taille du
 replay buffer** (100 k → 10 k) produit une dégradation **statistiquement
 significative** (IC95 disjoints, ≈ −9 %) ; (B) la **profondeur du réseau**
 (2 → 3 couches cachées) produit un gain **non significatif** (IC95 recouvrants,
-+2.7 %). Tous les chiffres sont traçables vers des runs committés et
-intégralement reproductibles via `reproduce.sh`.
++2.7 %). Un **2ᵉ agent (Double DQN)** confirme le choix du DQN vanilla :
+performance de pic équivalente (266.77, **p=0.95**) pour un code plus simple.
+Tous les chiffres sont traçables vers des runs committés et intégralement
+reproductibles via `reproduce.sh`.
 
 ---
 
@@ -220,30 +222,85 @@ configurations présentent le même effondrement tardif (§6).
 
 ![Courbes appariées — ablation profondeur du réseau (3×128 vs 2×128).](assets/plots/paired_depth3_vs_baseline.png)
 
-## 10. Discussion et limites
+## 10. Bonus — Double DQN (2ᵉ agent, justification du choix)
+
+Pour **justifier le choix du DQN vanilla** comme MVP, nous comparons à un
+second algorithme apprenant : **Double DQN** (van Hasselt et al., 2016). Le
+`max` de la cible vanilla sélectionne *et* évalue l'action next avec le même
+réseau cible → **surestimation systématique de Q**. Double DQN découple :
+l'action next est choisie par le réseau **online**, évaluée par le réseau
+**cible** : `y = r + γ·Q_cible(s', argmax Q_online(s', ·))`. **Seul ce calcul
+change** (override d'une méthode ; aucune autre modification du code, §12.4).
+
+| Métrique (agrégé 5 seeds) | DQN référence | Double DQN |
+|---|---|---|
+| Retour moyen, IC95 | **267.21** [256.19, 278.22] | **266.77** [258.64, 274.91] |
+| Résolu | 5/5 | 5/5 |
+| `first_solve_step` moyen | 132 000 | 168 000 |
+| Wall-time / run | ~46 min | ~22 min |
+
+**Lecture.** Différence de performance asymptotique **nulle et non
+significative** : Δ = −0.43 (−0.2 %), IC95 **recouvrants**, Welch
+t=0.06, **p=0.95**, Cohen d=0.04. Double DQN **n'améliore pas le pic** sur
+LunarLander (le best-checkpoint capte déjà le meilleur de chaque run), mais
+(i) son IC95 est **plus resserré** (largeur 16 vs 22 → légèrement plus
+régulier d'un seed à l'autre), (ii) il **réduit la surestimation de Q** par
+construction (vérifié : cible Double ≤ `max` vanilla terme à terme), (iii) il
+**entraîne ~2× plus vite** en wall-time. Conclusion : sur ce problème, le
+**DQN vanilla est le bon choix MVP** (performance de pic équivalente, code
+plus simple) ; Double DQN devient pertinent sous **budget CPU serré** ou pour
+**contenir l'effondrement tardif** (§6) — son bénéfice réel porte sur la
+*stabilité*, pas sur le pic.
+
+![Courbes appariées — DQN vs Double DQN (moyenne ± IC95, 5 seeds).](assets/plots/paired_double_dqn_vs_baseline.png)
+
+## 11. Recommandations
+
+Recommandations actionnables, chacune tracée aux chiffres ci-dessus :
+
+- **Livrer la baseline DQN vanilla** (`configs/baseline/dqn.yaml`, 2×128,
+  buffer 100 k) : meilleur pic (267.21, 5/5), code minimal. Double DQN est
+  équivalent (p=0.95) mais pas supérieur → préférer le plus simple.
+- **Garde-fou critique — toujours évaluer `best.pt`, jamais `final.pt`.**
+  Le DQN vanilla s'effondre en fin d'entraînement (§6) ; sans best-checkpoint
+  l'agent « ne résout pas ». C'est la recommandation la plus importante.
+- **Ne pas réduire le replay buffer sous ~100 k.** Le passer à 10 k coûte
+  **−9 % significatif** (p=0.008, IC disjoints) et **triple la variance**.
+  Sous contrainte mémoire seulement, accepter ce compromis (résout encore
+  5/5 mais instable, démarre plus tôt).
+- **Garder le réseau à 2×128.** Une 3ᵉ couche n'apporte rien de significatif
+  (p=0.36) pour le double de paramètres et de compute.
+- **Sous budget temps serré, utiliser Double DQN** : même performance, wall
+  ~2× plus court.
+- **Plus fort ROI à venir : target soft (Polyak) + Double DQN** pour
+  supprimer l'effondrement tardif — le best-checkpoint n'est qu'un pansement.
+
+## 12. Discussion et limites
 
 - **n = 5 seeds** : suffisant pour le critère du sujet et pour des IC
-  indicatifs, mais une conclusion forte de signification gagnerait à n ≥ 10 et
-  à un test de Welch plutôt qu'au recouvrement d'IC normaux.
+  indicatifs ; signification confirmée en appui par Welch + Cohen d
+  (`scripts/stats.py`). Une conclusion plus forte gagnerait à n ≥ 10.
 - **Instabilité du DQN vanilla** : le résultat « ≥ 200 » repose sur le
-  best-checkpoint ; le DQN *final* n'est pas fiable. Double DQN / target soft
-  (Polyak) sont les correctifs attendus (bonus T5.1).
+  best-checkpoint ; le DQN *final* n'est pas fiable. Double DQN (testé, §10)
+  ne corrige pas le pic ; le correctif attendu est **target soft (Polyak)
+  couplé au Double DQN** déjà livré.
 - **Mode d'échec résiduel** : la fraction de `truncated` (hover) indique que
   l'agent stationne parfois sans se poser — limite de la fonction de reward,
   pas de l'algorithme.
 - **Évaluation greedy sans vent** : conforme au sujet ; la robustesse au vent
   (`enable_wind`) est un axe d'extension non couvert ici.
 
-## 11. Travaux futurs
+## 13. Travaux futurs
 
-Par priorité décroissante d'impact attendu : (1) **Double DQN + target soft**
-pour supprimer l'effondrement tardif ; (2) **PER** pour accélérer et stabiliser
-l'apprentissage ; (3) **n-step returns** ; (4) robustesse **au vent** ;
-(5) passage en **continuous** (SAC) ; (6) augmentation de n_seeds + tests
-statistiques formels. Chacun est isolé architecturalement (un fichier + une
-clé de config) et n'impacte ni `trainer.py` ni `evaluator.py`.
+Par priorité décroissante d'impact attendu : (1) **target soft (Polyak)
+couplé au Double DQN livré** pour supprimer l'effondrement tardif ; (2) **PER**
+pour accélérer et stabiliser l'apprentissage ; (3) **n-step returns** ;
+(4) robustesse **au vent** ; (5) passage en **continuous** (SAC) ;
+(6) augmentation de n_seeds + tests statistiques formels. Chacun est isolé
+architecturalement (un fichier + une clé de config) et n'impacte ni
+`trainer.py` ni `evaluator.py`.
 
-## 12. Conclusion
+## 14. Conclusion
 
 Un DQN vanilla, soigneusement instrumenté et reproductible, **résout
 `LunarLander-v3` au-delà du critère** (267.21 ≥ 200, 5/5 seeds), à condition

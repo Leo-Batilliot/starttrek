@@ -14,6 +14,7 @@ _RUNS = (
     ("runs/dqn_baseline", "baseline (buffer 100k, 2×128)", "steelblue", "agg_returns_baseline.png"),
     ("runs/dqn_buffer10k", "ablation A (buffer 10k)", "darkorange", "agg_returns_buffer10k.png"),
     ("runs/dqn_depth3", "ablation B (3×128)", "seagreen", "agg_returns_depth3.png"),
+    ("runs/double_dqn", "Double DQN", "crimson", "agg_returns_double_dqn.png"),
 )
 
 _PAIRED = (
@@ -30,6 +31,13 @@ _PAIRED = (
         "seagreen",
         "paired_depth3_vs_baseline.png",
         "Paired training curves — network depth ablation",
+    ),
+    (
+        "runs/double_dqn",
+        "Double DQN",
+        "crimson",
+        "paired_double_dqn_vs_baseline.png",
+        "Paired training curves — DQN vs Double DQN",
     ),
 )
 

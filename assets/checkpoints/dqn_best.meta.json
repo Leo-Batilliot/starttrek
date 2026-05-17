@@ -1,0 +1,20 @@
+{
+  "source_run": "runs/dqn_baseline/1",
+  "seed": 1,
+  "source_checkpoint": "checkpoints/best.pt",
+  "config": "configs/baseline/dqn.yaml",
+  "agent": "dqn",
+  "network_hidden_sizes": [
+    128,
+    128
+  ],
+  "mean_return_last_100": 274.63,
+  "best_eval_return": 280.4,
+  "best_step": 400000,
+  "solved": true,
+  "eval_episodes": 100,
+  "greedy": true,
+  "note": "Best-eval baseline checkpoint, backed up outside gitignored runs/ for the live defense demo.",
+  "sha256": "c0597314b73841dcfc01644e5f588d6c1e7627076a2eb8cdd64ddd54e325e731",
+  "size_bytes": 148994
+}

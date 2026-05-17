@@ -1,4 +1,5 @@
 import json
+import math
 import sys
 import tempfile
 import unittest
@@ -6,7 +7,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.utils.metrics import aggregate, aggregate_runs, mean_ci95
+from src.utils.metrics import (
+    aggregate,
+    aggregate_runs,
+    betai,
+    cohens_d,
+    compare_samples,
+    mean_ci95,
+    welch_ttest,
+)
 
 
 class TestMeanCI95(unittest.TestCase):
@@ -99,6 +108,60 @@ class TestAggregateRuns(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(FileNotFoundError):
                 aggregate_runs(str(Path(tmp) / "nope" / "*" / "summary.json"))
+
+
+class TestBetai(unittest.TestCase):
+    def test_closed_forms(self):
+        # I_x(1,1) = x
+        for x in (0.1, 0.5, 0.9):
+            self.assertAlmostEqual(betai(1.0, 1.0, x), x, places=6)
+        # I_x(1/2,1/2) = (2/pi) * arcsin(sqrt(x))
+        for x in (0.05, 0.3, 0.75):
+            self.assertAlmostEqual(
+                betai(0.5, 0.5, x), 2.0 / math.pi * math.asin(math.sqrt(x)), places=6
+            )
+        self.assertEqual(betai(2.0, 3.0, 0.0), 0.0)
+        self.assertEqual(betai(2.0, 3.0, 1.0), 1.0)
+
+    def test_t_to_p_matches_normal_for_large_df(self):
+        # df -> inf, |t| = 1.959964  =>  two-sided p -> 0.05
+        t, df = 1.959963985, 1.0e7
+        p = betai(df / 2.0, 0.5, df / (df + t * t))
+        self.assertAlmostEqual(p, 0.05, places=4)
+
+
+class TestWelchAndCohen(unittest.TestCase):
+    def setUp(self):
+        # Equal-variance case: Welch reduces to the pooled t-test.
+        self.a = [10.0, 12.0, 14.0, 16.0, 18.0]   # mean 14, var 10
+        self.b = [20.0, 22.0, 24.0, 26.0, 28.0]   # mean 24, var 10
+
+    def test_identical_samples(self):
+        t, df, p = welch_ttest(self.a, self.a)
+        self.assertEqual(t, 0.0)
+        self.assertAlmostEqual(p, 1.0, places=6)
+
+    def test_known_t_df_p(self):
+        t, df, p = welch_ttest(self.a, self.b)
+        self.assertAlmostEqual(t, -5.0, places=6)
+        self.assertAlmostEqual(df, 8.0, places=6)
+        self.assertTrue(0.0009 < p < 0.0013, p)  # table: t=5,df=8 -> ~0.00106
+
+    def test_cohens_d_pooled(self):
+        self.assertAlmostEqual(cohens_d(self.a, self.b), -10.0 / math.sqrt(10.0), places=6)
+
+    def test_compare_samples_verdict(self):
+        c = compare_samples(self.a, self.b)
+        self.assertAlmostEqual(c["diff"], 10.0, places=6)
+        self.assertTrue(c["ci95_disjoint"])
+        self.assertTrue(c["significant"])
+        self.assertIn("SIGNIFICATIF", c["verdict"])
+
+    def test_too_few_samples_raise(self):
+        with self.assertRaises(ValueError):
+            welch_ttest([1.0], [1.0, 2.0])
+        with self.assertRaises(ValueError):
+            cohens_d([1.0], [1.0, 2.0])
 
 
 if __name__ == "__main__":

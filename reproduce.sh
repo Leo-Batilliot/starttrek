@@ -55,13 +55,23 @@ echo "--- regenerating plots ---"
 "$PY" scripts/aggregated_plots.py --seeds $SEEDS
 
 echo ""
+echo "--- comparative stats + significance tests ---"
+"$PY" scripts/stats.py --seeds $SEEDS
+
+echo ""
 echo "--- rebuilding report PDF (T4.2) ---"
 "$PY" scripts/build_report.py
+
+echo ""
+echo "--- rebuilding defense deck ---"
+"$PY" scripts/build_slides.py
 
 echo ""
 echo "======================================================================"
 echo "  reproduce.sh — done."
 echo "  runs/{dqn_baseline,dqn_buffer10k,dqn_depth3}/  + summary_aggregated"
 echo "  assets/plots/  (5 single-run + 3 aggregated + 2 paired)"
+echo "  stats/  (comparison + significance, csv + md)"
 echo "  report/report.pdf  (rebuilt from report/report.md)"
+echo "  report/slides.pdf  (defense deck, rebuilt from report/slides.md)"
 echo "======================================================================"

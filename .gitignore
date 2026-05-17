@@ -19,3 +19,9 @@ report/report.pdf
 
 scripts/build_report.py
 tests/test_build_report.py
+
+/report/slides.pdf
+/scripts/build_slides.py
+/tests/test_build_slides.py
+/tests/tests_stats.py
+/scripts/stats.py
