@@ -45,7 +45,6 @@ for entry in "${CONFIGS[@]}"; do
   for p in "${pids[@]:-}"; do
     [ -n "$p" ] && wait "$p"
   done
-  # Non-fatal: a failed solved-criterion must not abort artifact regen.
   "$PY" scripts/aggregate_runs.py --base "runs/$run" --seeds $SEEDS \
     || echo "  WARN: '$run' did not meet the >=4/5 solved criterion (continuing)"
 done
@@ -56,8 +55,13 @@ echo "--- regenerating plots ---"
 "$PY" scripts/aggregated_plots.py --seeds $SEEDS
 
 echo ""
+echo "--- rebuilding report PDF (T4.2) ---"
+"$PY" scripts/build_report.py
+
+echo ""
 echo "======================================================================"
 echo "  reproduce.sh — done."
 echo "  runs/{dqn_baseline,dqn_buffer10k,dqn_depth3}/  + summary_aggregated"
 echo "  assets/plots/  (5 single-run + 3 aggregated + 2 paired)"
+echo "  report/report.pdf  (rebuilt from report/report.md)"
 echo "======================================================================"

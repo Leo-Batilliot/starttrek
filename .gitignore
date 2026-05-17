@@ -13,3 +13,9 @@ runs/
 # Markdown kept local only (except the root README)
 *.md
 !/README.md
+!/report/report.md
+
+report/report.pdf
+
+scripts/build_report.py
+tests/test_build_report.py
