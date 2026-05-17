@@ -25,3 +25,7 @@ tests/test_build_report.py
 /tests/test_build_slides.py
 /tests/tests_stats.py
 /scripts/stats.py
+
+presentation.pdf
+scripts/build_presentation.py
+tests/test_build_presentation.py

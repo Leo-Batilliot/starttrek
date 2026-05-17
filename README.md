@@ -2,7 +2,7 @@
 
 > Projet Epitech **AIA-401**. Un agent **DQN écrit à la main** (PyTorch + Gymnasium uniquement) qui apprend à poser un module lunaire dans l'environnement [`LunarLander-v3`](https://gymnasium.farama.org/environments/box2d/lunar_lander/).
 
-Le contrat complet (contraintes dures, critères d'acceptation, livrables) est dans [`PROJECT.md`](./PROJECT.md). La feuille de route d'exécution est dans `PLAN.md`. L'historique des décisions techniques est dans `DOCUMENTATION.md`.
+Ce README est autosuffisant (installation, commandes, structure, résultats). Le rapport scientifique détaillé est dans `report/report.md`.
 
 ---
 
@@ -30,7 +30,7 @@ Le contrat complet (contraintes dures, critères d'acceptation, livrables) est d
 
 LunarLander : un vaisseau doit atterrir entre deux drapeaux. Observation = vecteur de **8 floats** (position, vitesse, angle, vitesse angulaire, contacts des 2 jambes) ; **4 actions discrètes** (rien, moteur gauche, moteur principal, moteur droit).
 
-**Objectif (critère d'acceptation §7 de `PROJECT.md`)** : atteindre un **mean episodic return ≥ 200** sur **100 épisodes consécutifs** en évaluation *greedy* (sans vent), reporté avec distribution et IC95, sur les seeds `0..4`.
+**Objectif (critère d'acceptation du sujet)** : atteindre un **mean episodic return ≥ 200** sur **100 épisodes consécutifs** en évaluation *greedy* (sans vent), reporté avec distribution et IC95, sur les seeds `0..4`.
 
 Contraintes : **Python uniquement**, aucune lib RL/ML hors `gymnasium` + `torch` (+ utilitaires de plomberie justifiés : `numpy`, `pyyaml`, `matplotlib`, `imageio`). Aucun outil de tuning automatique.
 
@@ -226,7 +226,7 @@ Une clé absente ou inconnue lève une `ValueError` explicite (chemin YAML + cl�
 - les 3 `runs/<run>/summary_aggregated.json` (agrégation moyenne + IC95, via `scripts/aggregate_runs.py`) ;
 - les **5 plots single-run** (`scripts/make_plots.py`) + les **5 plots agrégés / paired** (`scripts/aggregated_plots.py`) dans `assets/plots/`.
 
-Chaque run est entièrement seedé : les chiffres régénérés sont à **±5 %** des figures committées (critère §7.3 de `PROJECT.md`). Les 5 seeds d'une config tournent **en parallèle** (runs indépendants et seedés → mêmes résultats, seul le wall-time change) ; les 3 configs s'enchaînent.
+Chaque run est entièrement seedé : les chiffres régénérés sont à **±5 %** des figures committées (tolérance de reproductibilité). Les 5 seeds d'une config tournent **en parallèle** (runs indépendants et seedés → mêmes résultats, seul le wall-time change) ; les 3 configs s'enchaînent.
 
 Variables d'environnement :
 
@@ -289,7 +289,7 @@ runs/<run_name>/
 │       └── step_*.pt           # checkpoints périodiques
 ```
 
-Colonnes stables de `metrics.csv` (§8 `PROJECT.md`) :
+Colonnes stables de `metrics.csv` :
 `episode, global_step, return, length, epsilon, loss_mean, loss_std, termination_reason, terminated, truncated, wall_time_s`.
 
 `termination_reason` ∈ `land | crash | out_of_view | sleep | truncated | unknown` (classifié par `src/utils/termination.py` ; `unknown` = 0 % sur trajectoires réelles, asserté en T1.3).
@@ -306,7 +306,7 @@ make test
 .venv/bin/python -m unittest discover tests/
 ```
 
-**218 tests** (stdlib `unittest` uniquement, 1 skip sans rapport). Couverture : `replay_buffer`, `termination`, `seeding`, `env_factory` (obligatoires §9 `PROJECT.md`) + config, agents, schedules, logger, metrics, plotting, evaluator, vidéo.
+**245 tests** (stdlib `unittest` uniquement, 1 skip sans rapport). Couverture : `replay_buffer`, `termination`, `seeding`, `env_factory` (les 4 tests obligatoires du sujet) + config, agents, schedules, logger, metrics, plotting, evaluator, vidéo.
 
 ---
 
@@ -314,8 +314,7 @@ make test
 
 ```
 .
-├── PROJECT.md / PLAN.md / DOCUMENTATION.md   # hub / feuille de route / journal
-├── README.md                                 # ce fichier
+├── README.md                 # ce fichier (autosuffisant)
 ├── requirements.txt          # deps épinglées
 ├── Makefile                  # install / train / eval / test / reproduce / clean
 ├── reproduce.sh              # régénère 15 runs + summaries + 10 plots
@@ -340,9 +339,10 @@ make test
 │
 ├── scripts/                  # aggregate_runs, aggregated_plots, paired_plot,
 │                             #   make_plots, validate_termination
-├── tests/                    # unittest (218 tests)
+├── tests/                    # unittest (245 tests)
 ├── runs/                     # artefacts de training (gitignoré)
 ├── assets/                   # plots + vidéos committés (rapport)
+├── report/                   # report.md (rapport scientifique)
 └── report/                   # rapport (brouillon → PDF final)
 ```
 
@@ -364,7 +364,7 @@ Baseline et 2 ablations, **agrégés sur seeds 0..4**, `mean_return_last_100` (1
 - **Ablation A (buffer ÷10)** : dégradation **statistiquement significative** (IC95 disjoints, ≈ −25 pts) — la taille du buffer compte.
 - **Ablation B (profondeur +1 couche)** : gain **non significatif** (IC95 recouvrants, +2.7 %) — le MLP 2×128 sature déjà la tâche.
 
-Détails et figures dans `report/report_draft.md` et `assets/plots/`.
+Détails et figures dans `report/report.md` et `assets/plots/`.
 
 ---
 

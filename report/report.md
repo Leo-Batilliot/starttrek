@@ -36,7 +36,7 @@ plateforme, pénalise l'usage des moteurs, et écrase le pas terminal à **+100*
 (atterrissage) ou **−100** (crash / sortie de cadre). Un épisode se termine par
 atterrissage, crash, sortie de vue, ou troncature (timeout / corps endormi).
 
-L'objectif, fixé par le sujet (§7 de `PROJECT.md`), est un **mean episodic
+L'objectif, fixé par le sujet, est un **mean episodic
 return ≥ 200** sur **100 épisodes consécutifs en politique greedy, sans vent**,
 reporté avec sa distribution et sa variance, sur les seeds reproductibles 0–4.
 Ce rapport présente la méthode, le résultat de référence, l'analyse des modes
@@ -230,7 +230,8 @@ second algorithme apprenant : **Double DQN** (van Hasselt et al., 2016). Le
 réseau cible → **surestimation systématique de Q**. Double DQN découple :
 l'action next est choisie par le réseau **online**, évaluée par le réseau
 **cible** : `y = r + γ·Q_cible(s', argmax Q_online(s', ·))`. **Seul ce calcul
-change** (override d'une méthode ; aucune autre modification du code, §12.4).
+change** (override d'une méthode ; aucune autre modification du code —
+principe « un agent = un fichier »).
 
 | Métrique (agrégé 5 seeds) | DQN référence | Double DQN |
 |---|---|---|
