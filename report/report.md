@@ -12,8 +12,9 @@ Nous entraînons un agent **Deep Q-Network (DQN)** écrit à la main à résoudr
 moyen ≥ 200** sur **100 épisodes greedy** consécutifs. Sur **5 seeds (0–4)**,
 la configuration de référence atteint **267.21** de retour moyen agrégé
 (IC95 [256.19, 278.22]), avec **5/5 seeds résolus**. Nous mettons en évidence
-et quantifions un **effondrement tardif systématique du DQN vanilla**, géré par
-un mécanisme de *best-checkpoint*. Deux ablations contrôlées (un seul paramètre
+et quantifions une **instabilité tardive du DQN vanilla, dépendante du seed**
+(politique finale ≈ 212 vs ≈ 267 au pic, un seed sur cinq sous le seuil),
+gérée par un mécanisme de *best-checkpoint*. Deux ablations contrôlées (un seul paramètre
 modifié, vérifié par diff de configuration) sont menées : (A) la **taille du
 replay buffer** (100 k → 10 k) produit une dégradation **statistiquement
 significative** (IC95 disjoints, ≈ −9 %) ; (B) la **profondeur du réseau**
@@ -141,18 +142,23 @@ consolider, pas à atteindre le seuil.
 ## 6. Le phénomène d'effondrement tardif
 
 Une observation scientifique importante : le **DQN vanilla est instable en fin
-d'entraînement**. Sur *chaque* seed, la politique finale (step 500 k) se
-dégrade fortement par rapport au pic intermédiaire (ex. seed 0 : éval à
-500 k ≈ −604, alors que le pic ≈ +268). C'est le **deadly triad** classique
-(approximation de fonction + bootstrapping + off-policy) : sans Double DQN ni
-target soft, les valeurs Q peuvent diverger après avoir convergé.
+d'entraînement**, de façon **dépendante du seed**. Évaluée sur 100 épisodes
+greedy, la politique **finale** (`final.pt`, step 500 k) rend en moyenne
+**≈ 212** contre **≈ 267** pour le best-checkpoint : un écart d'environ
+**−55 points**, concentré sur certains seeds — la majorité reste correcte
+(232 / 225 / 268 / 280) mais un seed s'effondre nettement (**≈ 54**). C'est le
+**deadly triad** classique (approximation de fonction + bootstrapping +
+off-policy) : sans correctif, les valeurs Q peuvent diverger après avoir
+convergé — pas systématiquement, mais de façon imprévisible selon le seed.
 
 Conséquence méthodologique : nous conservons un **best-checkpoint** (meilleure
 éval périodique) et reportons ses performances, en plus du checkpoint final.
-Le `best_step` moyen se situe entre 210 k et 500 k selon le seed. Sans ce
-mécanisme, le DQN vanilla « ne résoudrait pas » la tâche en politique finale —
-distinction essentielle, souvent passée sous silence, et que les courbes
-d'entraînement (qui montrent l'effondrement) rendent visible.
+Sans ce mécanisme, la politique finale serait **non fiable** (un seed sur cinq
+sous le seuil) — distinction essentielle, souvent passée sous silence. Le
+soft-target (Polyak) a été **testé** (5 seeds, `configs/bonus/dqn_softtarget.
+yaml`) : équivalent au hard sur le pic (268.51 vs 267.21, Welch p=0.87) mais
+il **n'élimine pas** cette instabilité finale (moyenne `final.pt` ≈ 160, un
+seed à ≈ −119) — le best-checkpoint reste donc nécessaire.
 
 ## 7. Analyse des modes de terminaison
 
@@ -249,9 +255,9 @@ régulier d'un seed à l'autre), (ii) il **réduit la surestimation de Q** par
 construction (vérifié : cible Double ≤ `max` vanilla terme à terme), (iii) il
 **entraîne ~2× plus vite** en wall-time. Conclusion : sur ce problème, le
 **DQN vanilla est le bon choix MVP** (performance de pic équivalente, code
-plus simple) ; Double DQN devient pertinent sous **budget CPU serré** ou pour
-**contenir l'effondrement tardif** (§6) — son bénéfice réel porte sur la
-*stabilité*, pas sur le pic.
+plus simple) ; Double DQN reste pertinent sous **budget CPU serré** (~2×
+plus rapide) et comme **piste** contre l'instabilité finale (§6) — hypothèse
+non encore validée sur `final.pt`, le soft-target seul n'ayant pas suffi.
 
 ![Courbes appariées — DQN vs Double DQN (moyenne ± IC95, 5 seeds).](assets/plots/paired_double_dqn_vs_baseline.png)
 
@@ -263,8 +269,8 @@ Recommandations actionnables, chacune tracée aux chiffres ci-dessus :
   buffer 100 k) : meilleur pic (267.21, 5/5), code minimal. Double DQN est
   équivalent (p=0.95) mais pas supérieur → préférer le plus simple.
 - **Garde-fou critique — toujours évaluer `best.pt`, jamais `final.pt`.**
-  Le DQN vanilla s'effondre en fin d'entraînement (§6) ; sans best-checkpoint
-  l'agent « ne résout pas ». C'est la recommandation la plus importante.
+  La politique finale se dégrade selon le seed (§6 : moyenne ≈ 212 vs ≈ 267,
+  un seed sur cinq sous le seuil). Le best-checkpoint est indispensable.
 - **Ne pas réduire le replay buffer sous ~100 k.** Le passer à 10 k coûte
   **−9 % significatif** (p=0.008, IC disjoints) et **triple la variance**.
   Sous contrainte mémoire seulement, accepter ce compromis (résout encore
@@ -273,8 +279,10 @@ Recommandations actionnables, chacune tracée aux chiffres ci-dessus :
   (p=0.36) pour le double de paramètres et de compute.
 - **Sous budget temps serré, utiliser Double DQN** : même performance, wall
   ~2× plus court.
-- **Plus fort ROI à venir : target soft (Polyak) + Double DQN** pour
-  supprimer l'effondrement tardif — le best-checkpoint n'est qu'un pansement.
+- **Stabilité finale : encore ouverte.** Le soft-target (Polyak) a été
+  testé et **ne suffit pas** seul (§6). Piste restante : soft **+**
+  Double DQN combinés, à valider sur `final.pt` ; en attendant, le
+  best-checkpoint reste le garde-fou.
 
 ## 12. Discussion et limites
 
@@ -282,9 +290,10 @@ Recommandations actionnables, chacune tracée aux chiffres ci-dessus :
   indicatifs ; signification confirmée en appui par Welch + Cohen d
   (`scripts/stats.py`). Une conclusion plus forte gagnerait à n ≥ 10.
 - **Instabilité du DQN vanilla** : le résultat « ≥ 200 » repose sur le
-  best-checkpoint ; le DQN *final* n'est pas fiable. Double DQN (testé, §10)
-  ne corrige pas le pic ; le correctif attendu est **target soft (Polyak)
-  couplé au Double DQN** déjà livré.
+  best-checkpoint ; la politique finale n'est pas fiable selon le seed (§6).
+  Double DQN (testé, §10) ne change pas le pic ; le soft-target (testé)
+  **ne corrige pas l'instabilité finale** seul. Le correctif reste à
+  trouver — best-checkpoint nécessaire entre-temps.
 - **Mode d'échec résiduel** : la fraction de `truncated` (hover) indique que
   l'agent stationne parfois sans se poser — limite de la fonction de reward,
   pas de l'algorithme.
@@ -293,9 +302,10 @@ Recommandations actionnables, chacune tracée aux chiffres ci-dessus :
 
 ## 13. Travaux futurs
 
-Par priorité décroissante d'impact attendu : (1) **target soft (Polyak)
-couplé au Double DQN livré** pour supprimer l'effondrement tardif ; (2) **PER**
-pour accélérer et stabiliser l'apprentissage ; (3) **n-step returns** ;
+Par priorité décroissante d'impact attendu : (1) **stabilité finale** —
+soft-target seul testé sans succès ; tester **soft + Double DQN combinés**,
+voire reward/gradient clipping plus agressif, validés sur `final.pt` ;
+(2) **PER** pour accélérer et stabiliser l'apprentissage ; (3) **n-step returns** ;
 (4) robustesse **au vent** ; (5) passage en **continuous** (SAC) ;
 (6) augmentation de n_seeds + tests statistiques formels. Chacun est isolé
 architecturalement (un fichier + une clé de config) et n'impacte ni

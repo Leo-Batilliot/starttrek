@@ -2,3 +2,4 @@ comparison,diff,pct,mean_ref,mean_abl,ci95_disjoint,welch_t,welch_df,p_value,coh
 baseline_vs_dqn_buffer10k,-24.81,-9.28,267.21,242.40,True,3.8281,6.378,0.007725,2.4211,True,SIGNIFICATIF (IC95 disjoints)
 baseline_vs_dqn_depth3,7.10,2.66,267.21,274.30,False,-0.9753,7.712,0.359025,-0.6168,False,NON significatif (IC95 recouvrants)
 baseline_vs_double_dqn,-0.43,-0.16,267.21,266.77,False,0.0622,7.362,0.952025,0.0394,False,NON significatif (IC95 recouvrants)
+baseline_vs_dqn_softtarget,1.31,0.49,267.21,268.51,False,-0.1636,8.000,0.874083,-0.1035,False,NON significatif (IC95 recouvrants)

@@ -15,6 +15,7 @@ _RUNS = (
     ("runs/dqn_buffer10k", "ablation A (buffer 10k)", "darkorange", "agg_returns_buffer10k.png"),
     ("runs/dqn_depth3", "ablation B (3×128)", "seagreen", "agg_returns_depth3.png"),
     ("runs/double_dqn", "Double DQN", "crimson", "agg_returns_double_dqn.png"),
+    ("runs/dqn_softtarget", "Target soft (Polyak)", "purple", "agg_returns_softtarget.png"),
 )
 
 _PAIRED = (
@@ -38,6 +39,13 @@ _PAIRED = (
         "crimson",
         "paired_double_dqn_vs_baseline.png",
         "Paired training curves — DQN vs Double DQN",
+    ),
+    (
+        "runs/dqn_softtarget",
+        "target soft (Polyak)",
+        "purple",
+        "paired_softtarget_vs_baseline.png",
+        "Paired training curves — hard vs soft target update",
     ),
 )
 
