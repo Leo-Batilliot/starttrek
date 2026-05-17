@@ -383,5 +383,5 @@ Détails et figures dans `report/report.md` et `assets/plots/`.
 
 ## 15. Crédits
 
-Projet réalisé par **Gabin Wilson** — Epitech AIA-401 « Start Trek », promo 2026.
+Projet réalisé par **Gabin Wilson**, **Léo Batillot" — Epitech AIA-401 « Start Trek », promo 2026.
 Environnement [`Gymnasium LunarLander-v3`](https://gymnasium.farama.org/environments/box2d/lunar_lander/) (Farama Foundation).
