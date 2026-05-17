@@ -97,11 +97,6 @@ class DQNAgent(Agent):
             return {}
 
         tu = cfg.target_update
-        if tu.kind != "hard":
-            raise NotImplementedError(
-                "soft target update (Polyak) is deferred to T3.3; "
-                "use target_update.kind='hard'"
-            )
 
         batch = self.buffer.sample(cfg.batch_size)
         obs = batch["obs"].to(self.device)
@@ -124,8 +119,25 @@ class DQNAgent(Agent):
         self.optimizer.step()
 
         self._learn_step += 1
-        if tu.every_steps > 0 and self._learn_step % tu.every_steps == 0:
-            self.target_net.load_state_dict(self.q_net.state_dict())
+        if tu.kind == "hard":
+            # Periodic hard copy of the online weights into the target net.
+            if tu.every_steps > 0 and self._learn_step % tu.every_steps == 0:
+                self.target_net.load_state_dict(self.q_net.state_dict())
+        elif tu.kind == "soft":
+            # Polyak averaging every learn step: θ⁻ ← τ·θ + (1−τ)·θ⁻.
+            # Smoother target than the hard copy → mitigates the late
+            # divergence (deadly triad) instead of only checkpointing around
+            # it. τ small (e.g. 0.005). Done under no_grad (target is frozen).
+            tau = float(tu.tau)
+            with torch.no_grad():
+                for tp, p in zip(
+                    self.target_net.parameters(), self.q_net.parameters()
+                ):
+                    tp.mul_(1.0 - tau).add_(tau * p)
+        else:  # pragma: no cover - TargetUpdateConfig validates kind already
+            raise NotImplementedError(
+                f"unknown target_update.kind '{tu.kind}'"
+            )
 
         return {
             "loss": float(loss.item()),

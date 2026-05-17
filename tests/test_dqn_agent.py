@@ -247,12 +247,26 @@ class TestDQNAgentSkeleton(unittest.TestCase):
         self.assertLess(np.mean(losses[-50:]), 0.5 * np.mean(losses[:50]))
         self.assertLess(losses[-1], losses[0])
 
-    def test_soft_target_update_not_implemented(self):
+    def test_soft_target_update_polyak(self):
         seed_all(seed=0)
-        agent = DQNAgent(_cfg(buffer=16, batch=8, kind="soft", tau=0.01), n_actions=4)
-        _fill_buffer(agent, 16, np.random.default_rng(4))
-        with self.assertRaises(NotImplementedError):
-            agent.learn()
+        agent = DQNAgent(_cfg(buffer=64, batch=8, kind="soft", tau=0.01),
+                         n_actions=4)
+        _fill_buffer(agent, 64, np.random.default_rng(4))
+        before = [p.clone() for p in agent.target_net.parameters()]
+        for _ in range(20):
+            metrics = agent.learn()
+        self.assertIn("loss", metrics)
+        moved = any(
+            not torch.equal(b, t)
+            for b, t in zip(before, agent.target_net.parameters())
+        )
+        is_hard_copy = all(
+            torch.equal(tp, qp)
+            for tp, qp in zip(agent.target_net.parameters(),
+                              agent.q_net.parameters())
+        )
+        self.assertTrue(moved, "soft target should drift toward q_net")
+        self.assertFalse(is_hard_copy, "Polyak must not be a full hard copy")
 
     def test_save_load_roundtrip(self):
         seed_all(seed=0)
