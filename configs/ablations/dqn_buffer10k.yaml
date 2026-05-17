@@ -1,0 +1,41 @@
+run_name: dqn_buffer10k
+seed: 0
+
+env:
+  id: LunarLander-v3
+  kwargs: {}
+  wrappers:
+    - name: RecordEpisodeStats
+      kwargs: {}
+
+agent:
+  name: dqn
+  network:
+    hidden_sizes: [128, 128]
+    activation: relu
+  gamma: 0.99
+  lr: 5.0e-4
+  batch_size: 64
+  buffer_size: 10000
+  min_buffer_size: 1000
+  target_update:
+    kind: hard
+    every_steps: 1000
+  epsilon:
+    start: 1.0
+    end: 0.05
+    decay_steps: 100000
+  grad_clip: 10.0
+
+training:
+  total_steps: 500000
+  log_every: 1000
+  eval_every: 10000
+  eval_episodes: 20
+  save_every: 50000
+
+eval:
+  episodes: 100
+  greedy: true
+  record_video: false
+  video_every: 20

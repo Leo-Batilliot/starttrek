@@ -63,6 +63,7 @@ class TestSmokeEndToEnd(unittest.TestCase):
             for key in (
                 "solved", "mean_return_last_100", "eval_episodes",
                 "termination_breakdown", "best_step", "verdict_checkpoint",
+                "first_solve_step",
             ):
                 self.assertIn(key, summary)
             self.assertIsInstance(summary["solved"], bool)

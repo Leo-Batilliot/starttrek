@@ -10,7 +10,7 @@ import numpy as np
 
 from src.agents.base import Agent, Transition
 from src.env.factory import build_env
-from src.training.evaluator import evaluate
+from src.training.evaluator import SOLVED_THRESHOLD, evaluate
 from src.utils.config import RunConfig
 from src.utils.logger import Logger
 from src.utils.termination import classify
@@ -56,6 +56,9 @@ class Trainer:
         best_eval_return = -float("inf")
         best_step = 0
         best_ckpt = self.ckpt_dir / "best.pt"
+        # First periodic-eval step whose greedy mean return ≥ solved threshold
+        # (cheap learning-curve proxy over training.eval_episodes; None if never).
+        first_solve_step: int | None = None
 
         for global_step in range(1, total_steps + 1):
             action = self.agent.act(obs, greedy=False)
@@ -127,6 +130,8 @@ class Trainer:
                     episodes=eval_episodes, greedy=True, seed=self.cfg.seed,
                 )
                 mret = periodic["mean_return"]
+                if first_solve_step is None and mret >= SOLVED_THRESHOLD:
+                    first_solve_step = global_step
                 if mret > best_eval_return:
                     best_eval_return = mret
                     best_step = global_step
@@ -164,6 +169,7 @@ class Trainer:
             "best_eval_return": (
                 best_eval_return if best_eval_return != -float("inf") else None
             ),
+            "first_solve_step": first_solve_step,
             "verdict_checkpoint": verdict_ckpt.name,
             "mean_return_last_100": eval_result["mean_return"],
             "solved": eval_result["solved"],

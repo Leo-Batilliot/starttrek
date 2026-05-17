@@ -293,17 +293,17 @@ Chaque ticket a : **objectif** · **livrable** · **critère d'acceptation** (v�
 
 > But : reproduire la baseline DQN sur 5 seeds, mener au moins 2 ablations, produire les paired-plots et intervalles de confiance à 95 %, mettre en place `reproduce.sh` complet.
 
-- [ ] **T3.1 — Runs multi-seeds de la baseline DQN (seeds 0..4)**
+- [x] **T3.1 — Runs multi-seeds de la baseline DQN (seeds 0..4)**
   - **Objectif** : lancer 5 trainings avec seeds 0, 1, 2, 3, 4. Agrégation : mean ± 95 % CI sur `mean_return_last_100` et `first_solve_step`.
   - **Livrable** : `runs/dqn_baseline/{0,1,2,3,4}/` + `runs/dqn_baseline/summary_aggregated.json`.
   - **Critère d'acceptation** : au moins 4 seeds sur 5 ont `solved=true` ; CI95 du mean_return calculé et commité.
 
-- [ ] **T3.2 — `utils/metrics.py` (aggregation, CI95)**
+- [x] **T3.2 — `utils/metrics.py` (aggregation, CI95)**
   - **Objectif** : helpers `mean_ci95(values) → (mean, lo, hi)`, `aggregate_runs(pattern) → dict` utilisés par T3.1 et par la génération de plots paired.
   - **Livrable** : `src/utils/metrics.py`.
   - **Critère d'acceptation** : test manuel `mean_ci95([1,2,3,4,5])` donne un CI cohérent ; intégré dans la génération de `summary_aggregated.json`.
 
-- [ ] **T3.3 — Ablation A (choix à arrêter dans `DOCUMENTATION.md`)**
+- [x] **T3.3 — Ablation A (choix à arrêter dans `DOCUMENTATION.md`)**
   - **Objectif** : un seul paramètre changé par rapport à baseline. Recommandé : **buffer size** (1e4 vs 1e5 vs 1e6) OU **target update hard vs soft (Polyak τ)**.
   - **Livrable** : `configs/ablations/dqn_<ablation_A>.yaml` + runs seeds 0..4 + paired plot vs baseline.
   - **Critère d'acceptation** : paired plot commité + paragraphe d'analyse rédigé dans le brouillon de rapport.

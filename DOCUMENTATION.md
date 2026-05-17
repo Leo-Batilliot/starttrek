@@ -87,6 +87,124 @@ Exemples de jalons attendus :
 
 <!-- Ajouter les futures entrées ci-dessous, en ordre antéchronologique (le plus récent en premier). -->
 
+### v3.3.0 — 2026-05-17 — Ablation A : taille du replay buffer (T3.3)
+
+**Type** : feature (ablation + livrable)
+**Ticket** : T3.3
+**Phase** : 3 (Ablations & Reproductibilité)
+
+**Résumé**
+**Ablation A arrêtée = taille du replay buffer** (`buffer_size : 100000 → 10000`, seul paramètre modifié). 5 seeds → dégradation **statistiquement significative** : baseline **267.21** IC95 [256.19, 278.22] vs ablation **242.40** IC95 [236.08, 248.72] (**CI disjoints**, ≈ −25 pts / −9 %), mais l'ablation atteint ≥ 200 *plus tôt* (`first_solve_step` ~94k vs 132k). Livrables : `configs/ablations/dqn_buffer10k.yaml`, paired-plot `assets/plots/paired_buffer10k_vs_baseline.png`, paragraphe d'analyse dans `report/report_draft.md`.
+
+**Contexte / motivation**
+§6.3 PROJECT.md exige ≥ 2 ablations chiffrées avec comparaison contrôlée. Choix du buffer size (option recommandée par le PLAN, validée avec l'utilisateur) : ablation **sans changement de code** (paramètre déjà dans `AgentConfig`), histoire scientifique nette et attendue (buffer petit ⇒ échantillons corrélés ⇒ instabilité).
+
+**Détails techniques**
+- **`configs/ablations/dqn_buffer10k.yaml`** (créé) : copie exacte de `configs/baseline/dqn.yaml` avec `buffer_size: 10000` et `run_name: dqn_buffer10k`. Diff de config vérifié programmatiquement : **un seul champ change** (`agent.buffer_size` 100000→10000 ; `training`/`env` identiques) — rigueur de l'ablation contrôlée.
+- **`scripts/paired_plot.py`** (créé) : courbes return vs step, **moyenne ± IC95 sur 5 seeds** pour baseline et ablation sur les mêmes axes (+ ligne solved=200). Fonctions pures `binned_means` (binning par `global_step`, nan si bin vide) et `aggregate_curves` (réutilise `src.utils.metrics.mean_ci95` — bénéfice direct de T3.2). 25 bins de 20k steps.
+- **`runs/dqn_buffer10k/{0..4}/`** + `summary_aggregated.json` (via `scripts/aggregate_runs.py`, réutilisé tel quel). 5 runs parallèles, ~50 min.
+- **`report/report_draft.md`** (créé) : section baseline + section "Ablation A" avec tableau chiffré, conclusion CI disjoints, interprétation du compromis (buffer large = démarrage plus lent mais plateau plus haut/stable). Brouillon traçable pour T4.2.
+- **Fichiers** : créés `configs/ablations/dqn_buffer10k.yaml`, `scripts/paired_plot.py`, `tests/test_paired_plot.py` (5 tests : binning, bins droite/vide, agrégation CI, all-nan), `report/report_draft.md`, `assets/plots/paired_buffer10k_vs_baseline.png`, `runs/dqn_buffer10k/` ; modifiés `PLAN.md` (case T3.3).
+- **Résultats par seed (ablation)** : 235.5 / 243.1 / 235.4 / 252.4 / 245.6 — 5/5 solved. Même effondrement tardif que baseline ; best-checkpoint capture le pic sur chaque seed.
+
+**Alternatives rejetées**
+- *Ablation hard vs soft (Polyak)* : aurait nécessité d'implémenter le soft update (différé en T3.3) — plus de code/risque ; le buffer size donne une histoire aussi nette sans toucher l'agent.
+- *Buffer 1e6* : effet souvent ambigu sur LunarLander → conclusion moins exploitable que 10k (dégradation franche).
+- *Réutiliser `plot_returns_multi_seed` (T3.6)* : ce helper généralisé est explicitement T3.6 ; pour T3.3 un script paired dédié suffit (T3.6 généralisera dans `plotting.py` + régénérera tous les plots agrégés/paired).
+- *Binning par index d'épisode* : les seeds ont des nombres d'épisodes différents → binning par `global_step` (commun à 0..500k) est robuste et aligné.
+
+**Impact**
+- 1ʳᵉ ablation chiffrée et significative pour le rapport (T4.2) et la soutenance.
+- `scripts/paired_plot.py` réutilisable pour l'ablation B (T3.4) et branchable dans `reproduce.sh` (T3.5).
+
+**Non couvert volontairement**
+- 2ᵉ ablation → **T3.4**.
+- `plot_returns_multi_seed` généralisé (3 plots agrégés + 2 paired) dans `src/utils/plotting.py` → **T3.6**.
+- Versionnement git de `runs/dqn_buffer10k/` (gitignoré) : même politique que T3.1 (commit des summaries/metrics, pas les `.pt`) — décision utilisateur, Fin de Phase 3.
+
+**Validation**
+- Critère T3.3 : paired-plot généré (`assets/plots/paired_buffer10k_vs_baseline.png`, 102 KB) + paragraphe d'analyse rédigé (`report/report_draft.md`). Choix de l'ablation arrêté et justifié (cette entrée). ✅
+- Chiffres : `runs/dqn_buffer10k/summary_aggregated.json` → `n_solved=5/5`, `mean=242.40`, IC95 [236.08, 248.72] (vs baseline 267.21 [256.19, 278.22] — CI disjoints).
+- `python -m unittest discover tests/` → **214 tests, OK** (1 skipped sans rapport ; +5 `test_paired_plot`).
+
+### v3.2.0 — 2026-05-17 — `utils/metrics.py` : agrégation + CI95 (T3.2)
+
+**Type** : refactor (+ feature `aggregate_runs`)
+**Ticket** : T3.2
+**Phase** : 3 (Ablations & Reproductibilité)
+
+**Résumé**
+Extraction de la logique d'agrégation CI95 (inline dans `scripts/aggregate_runs.py` depuis T3.1) vers **`src/utils/metrics.py`** : `mean_ci95(values) → (mean, lo, hi)`, `aggregate(per_seed) → dict` (pure), `aggregate_runs(pattern) → dict` (glob de `summary.json`). Le script devient un thin CLI qui importe le module. `summary_aggregated.json` régénéré **byte-identique** (aucune dérive de l'artefact T3.1).
+
+**Contexte / motivation**
+T3.1 avait délibérément gardé l'agrégation inline (le module était explicitement T3.2 — pas d'anticipation). T3.2 la centralise pour réutilisation par les plots agrégés/paired (T3.6) et la repro (T3.5), sans dupliquer.
+
+**Détails techniques**
+- **`src/utils/metrics.py`** (créé) :
+  - `mean_ci95(values: Sequence[float]) → (mean, lo, hi)` : moyenne ± CI95 (approx normale, std ddof=1, `z=1.96` = même constante que `evaluator._CI95_Z` → CIs agrégés cohérents avec les CIs par-run). `n=0 → (0,0,0)` ; `n=1 → (v,v,v)` (dispersion non estimable).
+  - `aggregate(per_seed) → dict` : déplacé tel quel depuis le script (logique **identique** → sortie identique). Constante `SOLVED_CRITERION_MIN = 4` (critère T3.1 ≥ 4/5) nommée.
+  - `aggregate_runs(pattern) → dict` (**nouveau**, signature du ticket) : `glob(pattern)` des `summary.json`, seed = nom du dossier parent (int si numérique), tri stable, délègue à `aggregate`. `FileNotFoundError` si aucun match.
+- **`scripts/aggregate_runs.py`** : suppression des défs inline + `import math` ; `from src.utils.metrics import aggregate, mean_ci95` (ré-export → `from aggregate_runs import …` des tests existants reste valide). CLI / écriture / exit codes inchangés.
+- **Fichiers** : créés `src/utils/metrics.py`, `tests/test_metrics.py` (9 tests : acceptance `mean_ci95([1..5])`, n=0/1, `aggregate` 5/4/3-solved, `aggregate_runs` glob+tri+`FileNotFoundError`) ; modifié `scripts/aggregate_runs.py` ; `PLAN.md` case T3.2. `tests/test_aggregate_runs.py` inchangé (teste désormais le module via ré-export — toujours vert).
+- **Décision z=1.96 (et non t-Student n=5)** : cohérence avec `evaluator` **et** avec `summary_aggregated.json` déjà généré/commité en T3.1 (régénération byte-identique vérifiée par `diff`). Un raffinement t-distribution changerait l'artefact T3.1 sans bénéfice pour le critère.
+
+**Alternatives rejetées**
+- *Réécrire `test_aggregate_runs.py` pour cibler le module* : inutile — la ré-export garde ces 7 tests valides et non-dupliqués ; `test_metrics.py` ajoute la couverture directe (dont `aggregate_runs`).
+- *Importer `_CI95_Z` depuis `evaluator`* : c'est un privé d'`evaluator` ; dupliquer la constante (commentée) évite un couplage inverse trainer→eval inattendu.
+- *Passer à la loi de Student* : changerait l'artefact T3.1 commité ; hors besoin (critère = "CI cohérent").
+
+**Impact**
+- `mean_ci95`/`aggregate_runs` réutilisables par T3.6 (plots agrégés + paired-plots) et T3.5 (`reproduce.sh`).
+- Source unique de la sémantique CI95 du projet (plus de logique stat dans `scripts/`).
+
+**Non couvert volontairement**
+- Plots agrégés (CI95 shading) → **T3.6**.
+- Ablations → **T3.3 / T3.4**.
+
+**Validation**
+- Critère T3.2 : `mean_ci95([1,2,3,4,5])` = `(3.0, 1.614, 4.386)` — CI cohérent, symétrique, centré sur 3.0. ✅ Intégré : `scripts/aggregate_runs.py` régénère `summary_aggregated.json` **byte-identique** (`diff` = vide) → toujours `n_solved=5/5`, `mean=267.21`.
+- `python -m unittest discover tests/` → **209 tests, OK** (1 skipped sans rapport ; +9 `test_metrics`).
+
+### v3.1.0 — 2026-05-17 — Runs multi-seeds baseline DQN (T3.1)
+
+**Type** : feature (+ livrable run)
+**Ticket** : T3.1
+**Phase** : 3 (Ablations & Reproductibilité)
+
+**Résumé**
+Baseline DQN reproduite sur **5 seeds (0..4)** → `runs/dqn_baseline/{0..4}/` + `runs/dqn_baseline/summary_aggregated.json`. **5/5 `solved=true`** (critère T3.1 : ≥ 4/5). `mean_return_last_100` agrégé = **267.21, CI95 [256.19, 278.22]** ; `first_solve_step` moyen = 132 000 steps (CI95 [90.7k, 173.3k]). Ajout de `first_solve_step` au `summary.json` du trainer et de `scripts/aggregate_runs.py`.
+
+**Contexte / motivation**
+§6.4 / §7.3 PROJECT.md : un résultat RL n'est défendable qu'agrégé sur plusieurs seeds (le RL est très stochastique — démontré en Phase 2 : seed 0 run #1 = -318, run #2 = 246). Fournit la **référence chiffrée** dont dépendent les ablations T3.3/T3.4 (comparaison de distributions) et la repro T3.5.
+
+**Détails techniques**
+- **`src/training/trainer.py`** : `+from src.training.evaluator import SOLVED_THRESHOLD` ; suivi de `first_solve_step` = premier `global_step` dont l'éval périodique greedy (`training.eval_episodes`) atteint ≥ 200 (`None` si jamais) ; ajouté au `summary.json`. Proxy "apprentissage" (20 ép.), distinct du verdict autoritatif 100 ép.
+- **`scripts/aggregate_runs.py`** (créé) : lit `runs/dqn_baseline/{seeds}/summary.json`, calcule `mean_ci95` (z=1.96, ddof=1 — même constante que `evaluator._CI95_Z`) sur `mean_return_last_100` (tous seeds) et `first_solve_step` (seeds solved uniquement), compte `solved`, écrit `summary_aggregated.json`, exit 84 si < 4/5. Fonction pure `aggregate(per_seed)` testable.
+- **CI95 inline volontairement** : `src/utils/metrics.py` (`mean_ci95` / `aggregate_runs`) est explicitement **T3.2** — non anticipé (processus §2). T3.2 extraira la logique du script vers `utils/metrics.py`, le script importera ensuite de là.
+- **5 seeds re-run avec le trainer best-checkpoint** (y compris seed 0, dont le run T2.4 n'avait pas `first_solve_step`) → les 5 `summary.json` produits par un code **identique** (cohérence du `summary_aggregated.json`). Lancés en parallèle (4 threads/process, 20 cœurs), ~50 min wall.
+- **Fichiers** : créés `scripts/aggregate_runs.py`, `tests/test_aggregate_runs.py` (7 tests) ; modifiés `src/training/trainer.py`, `tests/test_smoke.py` (clé `first_solve_step`) ; `runs/dqn_baseline/{0..4}/` + `summary_aggregated.json` ; `PLAN.md` case T3.1.
+- **Résultats par seed** : 0→259.5, 1→274.6, 2→273.0, 3→279.7, 4→249.1 (tous solved). Le best-checkpoint capture le pic sur **chaque** seed malgré l'effondrement tardif systématique du DQN vanilla.
+
+**Alternatives rejetées**
+- *Créer `src/utils/metrics.py` maintenant* : anticipe T3.2. Agrégation inline + fonction pure testable suffit pour clore T3.1.
+- *Garder le run T2.4 de seed 0 tel quel* : son `summary.json` n'a pas `first_solve_step` → agrégat hétérogène. Re-run des 5 par code identique = plus propre.
+- *Runs séquentiels* : ~2 h vs ~50 min en parallèle (cœurs disponibles), même résultat.
+- *z=2.776 (t-Student, n=5)* : plus correct pour petit n, mais incohérent avec `evaluator` (z=1.96) ; choix de raffinement laissé à **T3.2** (qui possède le helper).
+
+**Impact**
+- Référence baseline chiffrée + reproductible → débloque T3.3/T3.4 (ablations vs baseline) et T3.6 (plots agrégés CI95).
+- `aggregate_runs.py` réutilisable tel quel dans `reproduce.sh` (T3.5).
+
+**Non couvert volontairement**
+- `src/utils/metrics.py` (extraction `mean_ci95`/`aggregate_runs`) → **T3.2**.
+- Plots agrégés multi-seeds (CI95 shading) → **T3.6**.
+- Versionnement git de `runs/` (gitignoré) : le commit des `summary.json`/`summary_aggregated.json`/`metrics.csv` (sans `.pt` lourds) est tranché en **Fin de Phase 3** — décision git laissée à l'utilisateur.
+
+**Validation**
+- `python scripts/aggregate_runs.py --base runs/dqn_baseline --seeds 0 1 2 3 4` → `summary_aggregated.json` : `n_solved=5/5`, `criterion_met=true`, `mean_return_last_100.mean=267.21` CI95 [256.19, 278.22]. ✅ **= critère T3.1 (≥ 4/5 solved + CI95 calculé).**
+- Reproductible : `python train.py --config configs/baseline/dqn.yaml --seed <0..4>` régénère chaque run avec `solved=true`.
+- `python -m unittest discover tests/` → **200 tests, OK** (1 skipped sans rapport ; +7 `test_aggregate_runs`).
+
 ### v2.6.0 — 2026-05-16 — Vidéo du DQN entraîné (T2.6)
 
 **Type** : infra (livrable asset)
