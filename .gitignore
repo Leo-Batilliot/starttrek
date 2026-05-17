@@ -9,3 +9,7 @@ runs/
 
 # Hidden Files
 .*
+
+# Markdown kept local only (except the root README)
+*.md
+!/README.md
