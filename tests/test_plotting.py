@@ -7,10 +7,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.utils.plotting import (
+    _aggregate_curves,
+    _binned_means,
     plot_episode_length,
     plot_epsilon,
     plot_loss,
     plot_returns,
+    plot_returns_multi_seed,
+    plot_returns_paired,
     plot_termination_breakdown,
 )
 
@@ -112,6 +116,59 @@ class TestPlotting(unittest.TestCase):
             w.writerow([1, 10])
         with self.assertRaises(ValueError):
             plot_returns(bad, self.dir / "x.png")
+
+
+class TestMultiSeedPlots(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.base = self.root / "baseline"
+        self.abl = self.root / "ablation"
+        for run, offset in ((self.base, 0.0), (self.abl, -30.0)):
+            for seed in range(3):
+                d = run / str(seed)
+                d.mkdir(parents=True)
+                _write_metrics(d / "metrics.csv", n=120)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _assert_png(self, path: Path) -> None:
+        self.assertTrue(path.exists())
+        self.assertGreater(path.stat().st_size, 0)
+        self.assertEqual(path.read_bytes()[:4], b"\x89PNG")
+
+    def test_binned_means_and_aggregate(self):
+        binned = _binned_means([1, 5, 12, 18], [10, 20, 100, 200], [0.0, 10.0, 20.0])
+        self.assertAlmostEqual(binned[0], 15.0)
+        self.assertAlmostEqual(binned[1], 150.0)
+        means, los, his = _aggregate_curves([[100.0, 200.0], [120.0, 220.0], [80.0, 180.0]])
+        self.assertAlmostEqual(means[0], 100.0)
+        self.assertLess(los[0], means[0])
+        self.assertGreater(his[1], means[1])
+
+    def test_plot_returns_multi_seed(self):
+        out = self.root / "agg.png"
+        plot_returns_multi_seed(
+            [self.base / str(s) for s in range(3)], out,
+            label="baseline", total_steps=12000, bins=8,
+        )
+        self._assert_png(out)
+
+    def test_plot_returns_paired(self):
+        out = self.root / "nested" / "paired.png"
+        plot_returns_paired(
+            [
+                ([self.base / str(s) for s in range(3)], "baseline", "steelblue"),
+                ([self.abl / str(s) for s in range(3)], "ablation", "darkorange"),
+            ],
+            out, total_steps=12000, bins=8,
+        )
+        self._assert_png(out)
+
+    def test_missing_metrics_raises(self):
+        with self.assertRaises(FileNotFoundError):
+            plot_returns_multi_seed([self.root / "nope"], self.root / "x.png")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import csv
+import math
 from collections import Counter
 from pathlib import Path
+from typing import Iterable, Sequence
 
 import matplotlib
 
@@ -10,6 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from src.utils.metrics import mean_ci95
 from src.utils.termination import TerminationReason
 
 
@@ -158,4 +161,142 @@ def plot_termination_breakdown(csv_path: Path | str, out_path: Path | str) -> Pa
     ax.grid(True, axis="y", alpha=0.3)
     for i, v in enumerate(values):
         ax.text(i, v + 0.01, f"{v:.2f}", ha="center", va="bottom", fontsize=9)
+    return _save_fig(fig, out_path)
+
+
+def _bin_edges(total_steps: float, bins: int) -> list[float]:
+    if bins < 1:
+        raise ValueError(f"bins must be >= 1, got {bins}")
+    return [i * total_steps / bins for i in range(bins + 1)]
+
+
+def _binned_means(
+    steps: Sequence[float], returns: Sequence[float], edges: Sequence[float]
+) -> list[float]:
+    n_bins = len(edges) - 1
+    sums = [0.0] * n_bins
+    counts = [0] * n_bins
+    for st, ret in zip(steps, returns):
+        for i in range(n_bins):
+            lo, hi = edges[i], edges[i + 1]
+            if (lo <= st < hi) or (i == n_bins - 1 and st == hi):
+                sums[i] += ret
+                counts[i] += 1
+                break
+    return [
+        (sums[i] / counts[i]) if counts[i] > 0 else float("nan")
+        for i in range(n_bins)
+    ]
+
+
+def _aggregate_curves(
+    per_seed_binned: list[list[float]],
+) -> tuple[list[float], list[float], list[float]]:
+    n_bins = len(per_seed_binned[0])
+    means: list[float] = []
+    los: list[float] = []
+    his: list[float] = []
+    for b in range(n_bins):
+        vals = [seed[b] for seed in per_seed_binned if not math.isnan(seed[b])]
+        if vals:
+            m, lo, hi = mean_ci95(vals)
+        else:
+            m = lo = hi = float("nan")
+        means.append(m)
+        los.append(lo)
+        his.append(hi)
+    return means, los, his
+
+
+def _load_seed_curves(
+    run_dirs: Iterable[Path | str], edges: Sequence[float]
+) -> list[list[float]]:
+    per_seed: list[list[float]] = []
+    for d in run_dirs:
+        csv_path = Path(d) / "metrics.csv"
+        if not csv_path.exists():
+            raise FileNotFoundError(f"metrics csv not found: {csv_path}")
+        steps: list[float] = []
+        rets: list[float] = []
+        with csv_path.open(newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for col in ("global_step", "return"):
+                if reader.fieldnames is None or col not in reader.fieldnames:
+                    raise ValueError(f"column '{col}' missing from {csv_path}")
+            for row in reader:
+                steps.append(float(row["global_step"]))
+                rets.append(float(row["return"]))
+        per_seed.append(_binned_means(steps, rets, edges))
+    if not per_seed:
+        raise ValueError("no run dirs provided")
+    return per_seed
+
+
+def _draw_series(
+    ax,
+    run_dirs: Sequence[Path | str],
+    edges: Sequence[float],
+    centers: Sequence[float],
+    *,
+    label: str,
+    color: str,
+) -> None:
+    per_seed = _load_seed_curves(run_dirs, edges)
+    means, los, his = _aggregate_curves(per_seed)
+    ax.plot(centers, means, color=color, linewidth=1.8, label=label)
+    ax.fill_between(centers, los, his, color=color, alpha=0.2)
+
+
+def plot_returns_multi_seed(
+    run_dirs: Sequence[Path | str],
+    out_path: Path | str,
+    *,
+    label: str = "DQN",
+    color: str = "steelblue",
+    total_steps: float = 500000,
+    bins: int = 25,
+    title: str | None = None,
+) -> Path:
+    edges = _bin_edges(total_steps, bins)
+    centers = [(edges[i] + edges[i + 1]) / 2 for i in range(bins)]
+    n = len(list(run_dirs))
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    _draw_series(
+        ax, run_dirs, edges, centers,
+        label=f"{label} (mean, {n} seeds)", color=color,
+    )
+    # Re-label the CI band via a proxy entry so the legend stays readable.
+    ax.fill_between([], [], [], color=color, alpha=0.2, label="95% CI")
+    ax.axhline(200.0, color="green", linestyle="--", linewidth=0.8, label="solved (200)")
+    ax.set_xlabel("training step")
+    ax.set_ylabel("episodic return (mean ± 95% CI)")
+    ax.set_title(title or f"{label} — return over training ({n} seeds)")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="lower right")
+    return _save_fig(fig, out_path)
+
+
+def plot_returns_paired(
+    series: Sequence[tuple[Sequence[Path | str], str, str]],
+    out_path: Path | str,
+    *,
+    total_steps: float = 500000,
+    bins: int = 25,
+    title: str = "Paired training curves (mean ± 95% CI, seeds 0..4)",
+) -> Path:
+    if not series:
+        raise ValueError("plot_returns_paired needs at least one series")
+    edges = _bin_edges(total_steps, bins)
+    centers = [(edges[i] + edges[i + 1]) / 2 for i in range(bins)]
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    for run_dirs, label, color in series:
+        _draw_series(ax, run_dirs, edges, centers, label=label, color=color)
+    ax.axhline(200.0, color="green", linestyle="--", linewidth=0.8, label="solved (200)")
+    ax.set_xlabel("training step")
+    ax.set_ylabel("episodic return (mean ± 95% CI, seeds 0..4)")
+    ax.set_title(title)
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="lower right")
     return _save_fig(fig, out_path)

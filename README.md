@@ -44,6 +44,23 @@ bash reproduce.sh
 python -m unittest discover tests/
 ```
 
+### Reproduire les résultats (`reproduce.sh`, T3.5)
+
+`bash reproduce.sh` régénère **tout** depuis les configs et seeds committés :
+
+- **15 trainings** = 3 configs (`baseline/dqn`, `ablations/dqn_buffer10k`, `ablations/dqn_depth3`) × seeds `0..4` ;
+- les 3 `runs/<run>/summary_aggregated.json` (agrégation + IC95, via `scripts/aggregate_runs.py`) ;
+- les **5 plots single-run** (`scripts/make_plots.py`) + les **5 plots agrégés/paired** (`scripts/aggregated_plots.py`) dans `assets/plots/`.
+
+Chaque run est entièrement seedé : les chiffres régénérés sont à **±5 %** des figures committées (critère §7.3 de `PROJECT.md`). Les 5 seeds d'une config tournent en parallèle (runs indépendants et seedés → mêmes résultats, seul le wall-time change) ; les configs s'enchaînent.
+
+Variables d'environnement : `SEEDS="0 1 2 3 4"`, `PY=...` (python à utiliser), `SKIP_EXISTING=1` (sauter un `(run, seed)` déjà calculé), `JOBS_THREADS=3` (threads torch/OMP par worker parallèle).
+
+```bash
+bash reproduce.sh                       # tout, seeds 0..4
+SEEDS="0 1" SKIP_EXISTING=1 bash reproduce.sh   # partiel / reprise
+```
+
 ---
 
 ## Structure du dépôt
